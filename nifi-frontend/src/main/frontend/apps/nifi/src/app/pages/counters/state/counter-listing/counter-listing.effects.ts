@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-import { Injectable } from '@angular/core';
+import { Injectable, inject } from '@angular/core';
 import { Actions, createEffect, ofType } from '@ngrx/effects';
 import { concatLatestFrom } from '@ngrx/operators';
 import { NiFiState } from '../../../../state';
@@ -28,23 +28,22 @@ import { SMALL_DIALOG, YesNoDialog } from '@nifi/shared';
 import * as ErrorActions from '../../../../state/error/error.actions';
 import { ErrorHelper } from '../../../../service/error-helper.service';
 import { HttpErrorResponse } from '@angular/common/http';
-import { selectStatus } from './counter-listing.selectors';
+import { selectLoadedTimestamp } from './counter-listing.selectors';
+import { initialState } from './counter-listing.reducer';
 
 @Injectable()
 export class CounterListingEffects {
-    constructor(
-        private actions$: Actions,
-        private store: Store<NiFiState>,
-        private countersService: CountersService,
-        private errorHelper: ErrorHelper,
-        private dialog: MatDialog
-    ) {}
+    private actions$ = inject(Actions);
+    private store = inject<Store<NiFiState>>(Store);
+    private countersService = inject(CountersService);
+    private errorHelper = inject(ErrorHelper);
+    private dialog = inject(MatDialog);
 
     loadCounters$ = createEffect(() =>
         this.actions$.pipe(
             ofType(CounterListingActions.loadCounters),
-            concatLatestFrom(() => this.store.select(selectStatus)),
-            switchMap(([, status]) =>
+            concatLatestFrom(() => this.store.select(selectLoadedTimestamp)),
+            switchMap(([, loadedTimestamp]) =>
                 from(this.countersService.getCounters()).pipe(
                     map((response) =>
                         CounterListingActions.loadCountersSuccess({
@@ -55,8 +54,26 @@ export class CounterListingEffects {
                         })
                     ),
                     catchError((errorResponse: HttpErrorResponse) =>
-                        of(this.errorHelper.handleLoadingError(status, errorResponse))
+                        of(
+                            CounterListingActions.loadCountersError({
+                                errorResponse,
+                                loadedTimestamp,
+                                status: loadedTimestamp !== initialState.loadedTimestamp ? 'success' : 'pending'
+                            })
+                        )
                     )
+                )
+            )
+        )
+    );
+
+    counterListingError$ = createEffect(() =>
+        this.actions$.pipe(
+            ofType(CounterListingActions.loadCountersError),
+            map((action) =>
+                this.errorHelper.handleLoadingError(
+                    action.loadedTimestamp !== initialState.loadedTimestamp,
+                    action.errorResponse
                 )
             )
         )
@@ -72,7 +89,7 @@ export class CounterListingEffects {
                         ...SMALL_DIALOG,
                         data: {
                             title: 'Reset Counter',
-                            message: `Reset counter '${request.counter.name}' to default value?`
+                            message: `Reset counter '${request.counter.name}' to 0?`
                         }
                     });
 
@@ -97,6 +114,49 @@ export class CounterListingEffects {
                     map((response) =>
                         CounterListingActions.resetCounterSuccess({
                             response
+                        })
+                    ),
+                    catchError((errorResponse: HttpErrorResponse) =>
+                        of(CounterListingActions.counterListingApiError({ errorResponse }))
+                    )
+                )
+            )
+        )
+    );
+
+    promptResetAllCounters$ = createEffect(
+        () =>
+            this.actions$.pipe(
+                ofType(CounterListingActions.promptResetAllCounters),
+                map((action) => action.request),
+                tap((request) => {
+                    const dialogReference = this.dialog.open(YesNoDialog, {
+                        ...SMALL_DIALOG,
+                        data: {
+                            title: 'Reset All Counters',
+                            message: `Reset all counters to 0? This will reset ${request.counterCount} counters.`
+                        }
+                    });
+
+                    dialogReference.componentInstance.yes.pipe(take(1)).subscribe(() => {
+                        this.store.dispatch(CounterListingActions.resetAllCounters());
+                    });
+                })
+            ),
+        { dispatch: false }
+    );
+
+    resetAllCounters$ = createEffect(() =>
+        this.actions$.pipe(
+            ofType(CounterListingActions.resetAllCounters),
+            switchMap(() =>
+                from(this.countersService.resetAllCounters()).pipe(
+                    map((response) =>
+                        CounterListingActions.resetAllCountersSuccess({
+                            response: {
+                                counters: response.counters.aggregateSnapshot.counters,
+                                loadedTimestamp: response.counters.aggregateSnapshot.generated
+                            }
                         })
                     ),
                     catchError((errorResponse: HttpErrorResponse) =>

@@ -37,7 +37,6 @@ import org.apache.nifi.components.PropertyDescriptor;
 import org.apache.nifi.expression.ExpressionLanguageScope;
 import org.apache.nifi.flowfile.FlowFile;
 import org.apache.nifi.flowfile.attributes.CoreAttributes;
-import org.apache.nifi.processor.AbstractProcessor;
 import org.apache.nifi.processor.ProcessContext;
 import org.apache.nifi.processor.ProcessSession;
 import org.apache.nifi.processor.Relationship;
@@ -78,7 +77,7 @@ import static org.apache.nifi.processors.box.BoxFileAttributes.ERROR_MESSAGE_DES
         @WritesAttribute(attribute = ERROR_CODE, description = ERROR_CODE_DESC),
         @WritesAttribute(attribute = ERROR_MESSAGE, description = ERROR_MESSAGE_DESC)
 })
-public class ExtractStructuredBoxFileMetadata extends AbstractProcessor {
+public class ExtractStructuredBoxFileMetadata extends AbstractBoxProcessor {
 
     public static final PropertyDescriptor FILE_ID = new PropertyDescriptor.Builder()
             .name("File ID")
@@ -144,7 +143,7 @@ public class ExtractStructuredBoxFileMetadata extends AbstractProcessor {
     );
 
     private static final List<PropertyDescriptor> PROPERTY_DESCRIPTORS = List.of(
-            BoxClientService.BOX_CLIENT_SERVICE,
+            BOX_CLIENT_SERVICE,
             FILE_ID,
             EXTRACTION_METHOD,
             TEMPLATE_KEY,
@@ -167,7 +166,7 @@ public class ExtractStructuredBoxFileMetadata extends AbstractProcessor {
 
     @OnScheduled
     public void onScheduled(final ProcessContext context) {
-        final BoxClientService boxClientService = context.getProperty(BoxClientService.BOX_CLIENT_SERVICE)
+        final BoxClientService boxClientService = context.getProperty(BOX_CLIENT_SERVICE)
                 .asControllerService(BoxClientService.class);
         boxAPIConnection = boxClientService.getBoxApiConnection();
     }
@@ -272,7 +271,7 @@ public class ExtractStructuredBoxFileMetadata extends AbstractProcessor {
         Record record;
         while ((record = recordReader.nextRecord()) != null) {
             final String key = record.getAsString("key");
-            if (key == null || key.trim().isEmpty()) {
+            if (key == null || key.isBlank()) {
                 throw new MalformedRecordException("Field record missing a key field: " + record);
             }
 
@@ -288,7 +287,7 @@ public class ExtractStructuredBoxFileMetadata extends AbstractProcessor {
                 for (Object option : iterable) {
                     if (option instanceof Record optionRecord) {
                         final String optionKey = optionRecord.getAsString("key");
-                        if (optionKey != null && !optionKey.trim().isEmpty()) {
+                        if (optionKey != null && !optionKey.isBlank()) {
                             options.add(new BoxAIExtractFieldOption(optionKey));
                         } else {
                             getLogger().warn("Option record missing a valid 'key': {}", optionRecord);

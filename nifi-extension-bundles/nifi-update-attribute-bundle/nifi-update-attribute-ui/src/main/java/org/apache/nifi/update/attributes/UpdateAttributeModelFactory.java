@@ -33,9 +33,6 @@ import java.util.Set;
  */
 public class UpdateAttributeModelFactory {
 
-    public UpdateAttributeModelFactory() {
-    }
-
     public Rule createRule(final RuleDTO dto) {
         if (dto == null) {
             throw new IllegalArgumentException("Rule must be specified.");
@@ -43,7 +40,7 @@ public class UpdateAttributeModelFactory {
         if (dto.getName() == null) {
             throw new IllegalArgumentException("Rule name must be specified.");
         }
-        if (dto.getName().trim().isEmpty()) {
+        if (dto.getName().isBlank()) {
             throw new IllegalArgumentException("Rule name cannot be blank.");
         }
 

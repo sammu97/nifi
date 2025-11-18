@@ -48,6 +48,7 @@ import org.apache.nifi.groups.RemoteProcessGroup;
 import org.apache.nifi.groups.StatelessGroupNode;
 import org.apache.nifi.groups.StatelessGroupScheduledState;
 import org.apache.nifi.groups.VersionedComponentAdditions;
+import org.apache.nifi.lifecycle.ProcessorStopLifecycleMethods;
 import org.apache.nifi.parameter.ParameterContext;
 import org.apache.nifi.parameter.ParameterUpdate;
 import org.apache.nifi.registry.flow.FlowLocation;
@@ -163,7 +164,7 @@ public class MockProcessGroup implements ProcessGroup {
     }
 
     @Override
-    public CompletableFuture<Void> stopComponents() {
+    public CompletableFuture<Void> stopComponents(final ProcessorStopLifecycleMethods processorStopLifecycleMethods) {
         return CompletableFuture.completedFuture(null);
     }
 
@@ -725,7 +726,7 @@ public class MockProcessGroup implements ProcessGroup {
     }
 
     @Override
-    public void disconnectVersionControl(final boolean removeVersionedComponentIds) {
+    public void disconnectVersionControl() {
         this.versionControlInfo = null;
     }
 
@@ -806,6 +807,7 @@ public class MockProcessGroup implements ProcessGroup {
         return new NoOpBatchCounts();
     }
 
+    @Override
     public DataValve getDataValve(Port port) {
         return null;
     }
@@ -856,10 +858,16 @@ public class MockProcessGroup implements ProcessGroup {
     }
 
     @Override
+    public Map<String, String> getLoggingAttributes() {
+        return Map.of();
+    }
+
+    @Override
     public String getLogFileSuffix() {
         return null;
     }
 
+    @Override
     public ExecutionEngine getExecutionEngine() {
         return ExecutionEngine.STANDARD;
     }

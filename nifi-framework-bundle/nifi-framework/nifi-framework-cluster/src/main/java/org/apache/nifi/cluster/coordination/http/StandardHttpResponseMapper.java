@@ -20,6 +20,8 @@ import jakarta.ws.rs.core.StreamingOutput;
 import org.apache.nifi.cluster.coordination.http.endpoints.AccessPolicyEndpointMerger;
 import org.apache.nifi.cluster.coordination.http.endpoints.AssetsEndpointMerger;
 import org.apache.nifi.cluster.coordination.http.endpoints.BulletinBoardEndpointMerger;
+import org.apache.nifi.cluster.coordination.http.endpoints.ClearBulletinsEndpointMerger;
+import org.apache.nifi.cluster.coordination.http.endpoints.ClearBulletinsForGroupEndpointMerger;
 import org.apache.nifi.cluster.coordination.http.endpoints.ComponentStateEndpointMerger;
 import org.apache.nifi.cluster.coordination.http.endpoints.ConnectionEndpointMerger;
 import org.apache.nifi.cluster.coordination.http.endpoints.ConnectionStatusEndpointMerger;
@@ -205,6 +207,8 @@ public class StandardHttpResponseMapper implements HttpResponseMapper {
         endpointMergers.add(new NarSummariesEndpointMerger());
         endpointMergers.add(new NarDetailsEndpointMerger());
         endpointMergers.add(new AssetsEndpointMerger());
+        endpointMergers.add(new ClearBulletinsEndpointMerger());
+        endpointMergers.add(new ClearBulletinsForGroupEndpointMerger());
     }
 
     @Override
@@ -230,7 +234,7 @@ public class StandardHttpResponseMapper implements HttpResponseMapper {
         final Set<NodeResponse> problematicResponses = nodeResponses.stream().filter(p -> !p.is2xx()).collect(Collectors.toSet());
 
         final NodeResponse clientResponse;
-        if ("GET".equalsIgnoreCase(httpMethod) && problematicResponses.size() > 0) {
+        if ("GET".equalsIgnoreCase(httpMethod) && !problematicResponses.isEmpty()) {
             // If there are problematic responses, at least one of the nodes couldn't complete the request
             clientResponse = problematicResponses.stream().filter(p -> p.getStatus() >= 400 && p.getStatus() < 500).findFirst().orElse(
                     problematicResponses.stream().filter(p -> p.getStatus() > 500).findFirst().orElse(problematicResponses.iterator().next()));

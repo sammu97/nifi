@@ -44,7 +44,6 @@ import org.elasticsearch.client.Request;
 import org.elasticsearch.client.Response;
 import org.elasticsearch.client.ResponseException;
 import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
@@ -67,8 +66,6 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.junit.jupiter.api.Assertions.fail;
-import static org.junit.jupiter.api.Assumptions.assumeFalse;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 class ElasticSearchClientService_IT extends AbstractElasticsearch_IT {
@@ -334,20 +331,6 @@ class ElasticSearchClientService_IT extends AbstractElasticsearch_IT {
     }
 
     @Test
-    void testV6SearchWarnings() throws JsonProcessingException {
-        assumeTrue(getElasticMajorVersion() == 6, "Requires Elasticsearch 6");
-        final String query = prettyJson(new MapBuilder()
-                .of("size", 1,
-                        "query", new MapBuilder().of("query_string",
-                                new MapBuilder().of("query", 1, "all_fields", true).build()
-                        ).build())
-                .build());
-        final String type = "a-type";
-        final SearchResponse response = service.search(query, INDEX, type, null);
-        assertFalse(response.getWarnings().isEmpty(), "Missing warnings");
-    }
-
-    @Test
     void testV7SearchWarnings() throws JsonProcessingException {
         assumeTrue(getElasticMajorVersion() == 7, "Requires Elasticsearch 7");
         final String query = prettyJson(new MapBuilder()
@@ -358,11 +341,18 @@ class ElasticSearchClientService_IT extends AbstractElasticsearch_IT {
         assertFalse(response.getWarnings().isEmpty(), "Missing warnings");
     }
 
-    @Disabled("Skip until Elasticsearch 8.x has a _search API deprecation")
     @Test
-    void testV8SearchWarnings() {
+    void testV8SearchWarnings() throws JsonProcessingException {
         assumeTrue(getElasticMajorVersion() == 8, "Requires Elasticsearch 8");
-        fail("Elasticsearch 8 search API deprecations not currently available for test");
+        final String query = prettyJson(new MapBuilder()
+                .of("size", 1, "query", new MapBuilder().of("range",
+                        new MapBuilder().of("counter",
+                            new MapBuilder().of("from", 0, "include_lower", true, "to", 1, "include_upper", true).build()
+                        ).build()
+                    ).build()
+                ).build());
+        final SearchResponse response = service.search(query, INDEX, null, null);
+        assertFalse(response.getWarnings().isEmpty(), "Missing warnings");
     }
 
     @Test
@@ -770,14 +760,12 @@ class ElasticSearchClientService_IT extends AbstractElasticsearch_IT {
         final List<IndexOperationRequest> payload = new ArrayList<>();
         for (int x = 0; x < 20; x++) {
             final String index = x % 2 == 0 ? "bulk_a" : "bulk_b";
-            payload.add(new IndexOperationRequest(index, type, String.valueOf(x), new HashMap<>() {{
-                put("msg", "test");
-            }}, IndexOperationRequest.Operation.Index, null, false, null, null));
+            payload.add(new IndexOperationRequest(index, type, String.valueOf(x), Map.of("msg", "test"),
+                    IndexOperationRequest.Operation.Index, null, false, null, null));
         }
         for (int x = 0; x < 5; x++) {
-            payload.add(new IndexOperationRequest("bulk_c", type, String.valueOf(x), new HashMap<>() {{
-                put("msg", "test");
-            }}, IndexOperationRequest.Operation.Index, null, false, null, null));
+            payload.add(new IndexOperationRequest("bulk_c", type, String.valueOf(x), Map.of("msg", "test"),
+                    IndexOperationRequest.Operation.Index, null, false, null, null));
         }
         final IndexOperationResponse response = service.bulk(payload, new ElasticsearchRequestOptions(Map.of("refresh", "true"), null));
         assertNotNull(response);
@@ -851,8 +839,6 @@ class ElasticSearchClientService_IT extends AbstractElasticsearch_IT {
 
     @Test
     void testDynamicTemplates() {
-        assumeFalse(getElasticMajorVersion() == 6, "Requires Elasticsearch > 6");
-
         final List<IndexOperationRequest> payload = Collections.singletonList(
                 new IndexOperationRequest("dynamo", type, "1", new MapBuilder().of("msg", "test", "hello", "world").build(),
                         IndexOperationRequest.Operation.Index, null, false, new MapBuilder().of("hello", "test_text").build(), null)

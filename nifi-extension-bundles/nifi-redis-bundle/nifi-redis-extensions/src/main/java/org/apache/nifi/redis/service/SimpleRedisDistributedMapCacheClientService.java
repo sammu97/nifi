@@ -26,6 +26,7 @@ import org.apache.nifi.controller.ConfigurationContext;
 import org.apache.nifi.distributed.cache.client.Deserializer;
 import org.apache.nifi.distributed.cache.client.DistributedMapCacheClient;
 import org.apache.nifi.distributed.cache.client.Serializer;
+import org.apache.nifi.migration.PropertyConfiguration;
 import org.apache.nifi.redis.RedisConnectionPool;
 import org.apache.nifi.redis.util.RedisAction;
 import org.apache.nifi.util.Tuple;
@@ -40,6 +41,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
+import static org.apache.nifi.redis.util.RedisUtils.OLD_REDIS_CONNECTION_POOL_PROPERTY_NAME;
+import static org.apache.nifi.redis.util.RedisUtils.OLD_TTL_PROPERTY_NAME;
 import static org.apache.nifi.redis.util.RedisUtils.REDIS_CONNECTION_POOL;
 import static org.apache.nifi.redis.util.RedisUtils.TTL;
 
@@ -118,7 +121,7 @@ public class SimpleRedisDistributedMapCacheClientService extends AbstractControl
                 // if the results list was empty, then the transaction failed (i.e. key was modified after we started watching), so keep looping to retry
                 // if the results list was null, then the transaction failed
                 // if the results list has results, then the transaction succeeded and it should have the result of the setNX operation
-                if (results != null && results.size() > 0) {
+                if (results != null && !results.isEmpty()) {
                     final Object firstResult = results.get(0);
                     if (firstResult instanceof Boolean) {
                         final Boolean absent = (Boolean) firstResult;
@@ -196,6 +199,12 @@ public class SimpleRedisDistributedMapCacheClientService extends AbstractControl
             final long numRemoved = redisConnection.keyCommands().del(k);
             return numRemoved > 0;
         });
+    }
+
+    @Override
+    public void migrateProperties(PropertyConfiguration config) {
+        config.renameProperty(OLD_REDIS_CONNECTION_POOL_PROPERTY_NAME, REDIS_CONNECTION_POOL.getName());
+        config.renameProperty(OLD_TTL_PROPERTY_NAME, TTL.getName());
     }
 
     /**

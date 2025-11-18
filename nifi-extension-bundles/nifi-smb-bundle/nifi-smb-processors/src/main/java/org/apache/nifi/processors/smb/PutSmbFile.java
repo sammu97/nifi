@@ -45,6 +45,7 @@ import org.apache.nifi.expression.ExpressionLanguageScope;
 import org.apache.nifi.flowfile.FlowFile;
 import org.apache.nifi.flowfile.attributes.CoreAttributes;
 import org.apache.nifi.logging.ComponentLog;
+import org.apache.nifi.migration.PropertyConfiguration;
 import org.apache.nifi.processor.AbstractProcessor;
 import org.apache.nifi.processor.ProcessContext;
 import org.apache.nifi.processor.ProcessSession;
@@ -63,6 +64,10 @@ import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
 import static org.apache.nifi.smb.common.SmbProperties.ENABLE_DFS;
+import static org.apache.nifi.smb.common.SmbProperties.OLD_ENABLE_DFS_PROPERTY_NAME;
+import static org.apache.nifi.smb.common.SmbProperties.OLD_SMB_DIALECT_PROPERTY_NAME;
+import static org.apache.nifi.smb.common.SmbProperties.OLD_TIMEOUT_PROPERTY_NAME;
+import static org.apache.nifi.smb.common.SmbProperties.OLD_USE_ENCRYPTION_PROPERTY_NAME;
 import static org.apache.nifi.smb.common.SmbProperties.SMB_DIALECT;
 import static org.apache.nifi.smb.common.SmbProperties.TIMEOUT;
 import static org.apache.nifi.smb.common.SmbProperties.USE_ENCRYPTION;
@@ -234,6 +239,14 @@ public class PutSmbFile extends AbstractProcessor {
     }
 
     @Override
+    public void migrateProperties(PropertyConfiguration config) {
+        config.renameProperty(OLD_ENABLE_DFS_PROPERTY_NAME, ENABLE_DFS.getName());
+        config.renameProperty(OLD_SMB_DIALECT_PROPERTY_NAME, SMB_DIALECT.getName());
+        config.renameProperty(OLD_TIMEOUT_PROPERTY_NAME, TIMEOUT.getName());
+        config.renameProperty(OLD_USE_ENCRYPTION_PROPERTY_NAME, USE_ENCRYPTION.getName());
+    }
+
+    @Override
     protected Collection<ValidationResult> customValidate(ValidationContext validationContext) {
         Collection<ValidationResult> set = new ArrayList<>();
         if (validationContext.getProperty(USERNAME).isSet() && !validationContext.getProperty(PASSWORD).isSet()) {
@@ -309,7 +322,7 @@ public class PutSmbFile extends AbstractProcessor {
                 String destinationFullPath;
 
                 // build destination path for the flowfile
-                if (destinationDirectory == null || destinationDirectory.trim().isEmpty()) {
+                if (destinationDirectory == null || destinationDirectory.isBlank()) {
                     destinationFullPath = destinationFilename;
                 } else {
                     destinationFullPath = new java.io.File(destinationDirectory, destinationFilename).getPath();
@@ -344,16 +357,16 @@ public class PutSmbFile extends AbstractProcessor {
 
                 // handle temporary suffix
                 final String renameSuffixValue = context.getProperty(RENAME_SUFFIX).getValue();
-                final Boolean renameSuffix = renameSuffixValue != null && !renameSuffixValue.trim().isEmpty();
-                String finalDestinationFullPath = destinationFullPath;
+                final boolean renameSuffix = renameSuffixValue != null && !renameSuffixValue.isBlank();
+                StringBuilder finalDestinationFullPath = new StringBuilder(destinationFullPath);
                 if (renameSuffix) {
-                    finalDestinationFullPath += renameSuffixValue;
+                    finalDestinationFullPath.append(renameSuffixValue);
                 }
 
                 // handle the transfer
                 try (
                     File shareDestinationFile = share.openFile(
-                        finalDestinationFullPath,
+                        finalDestinationFullPath.toString(),
                         EnumSet.of(AccessMask.GENERIC_WRITE),
                         EnumSet.of(FileAttributes.FILE_ATTRIBUTE_NORMAL),
                         sharedAccess,
@@ -371,7 +384,7 @@ public class PutSmbFile extends AbstractProcessor {
                 // handle the rename
                 if (renameSuffix) {
                     try (DiskEntry fileDiskEntry = share.open(
-                        finalDestinationFullPath,
+                        finalDestinationFullPath.toString(),
                         EnumSet.of(AccessMask.DELETE, AccessMask.GENERIC_WRITE),
                         EnumSet.of(FileAttributes.FILE_ATTRIBUTE_NORMAL),
                         sharedAccess,

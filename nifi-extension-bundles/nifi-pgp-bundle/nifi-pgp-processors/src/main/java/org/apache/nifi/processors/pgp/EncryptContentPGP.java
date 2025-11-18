@@ -17,6 +17,8 @@
 package org.apache.nifi.processors.pgp;
 
 import org.apache.nifi.annotation.behavior.InputRequirement;
+import org.apache.nifi.annotation.behavior.SideEffectFree;
+import org.apache.nifi.annotation.behavior.SupportsBatching;
 import org.apache.nifi.annotation.behavior.WritesAttribute;
 import org.apache.nifi.annotation.behavior.WritesAttributes;
 import org.apache.nifi.annotation.documentation.CapabilityDescription;
@@ -30,6 +32,7 @@ import org.apache.nifi.expression.ExpressionLanguageScope;
 import org.apache.nifi.flowfile.FlowFile;
 import org.apache.nifi.flowfile.attributes.CoreAttributes;
 import org.apache.nifi.logging.ComponentLog;
+import org.apache.nifi.migration.PropertyConfiguration;
 import org.apache.nifi.pgp.service.api.PGPPublicKeyService;
 import org.apache.nifi.processor.AbstractProcessor;
 import org.apache.nifi.processor.ProcessContext;
@@ -75,6 +78,8 @@ import java.util.Set;
 /**
  * Encrypt Content using Open Pretty Good Privacy encryption methods
  */
+@SideEffectFree
+@SupportsBatching
 @InputRequirement(InputRequirement.Requirement.INPUT_REQUIRED)
 @Tags({"PGP", "GPG", "OpenPGP", "Encryption", "RFC 4880"})
 @CapabilityDescription("Encrypt contents using OpenPGP. The processor reads input and detects OpenPGP messages to avoid unnecessary additional wrapping in Literal Data packets.")
@@ -101,8 +106,7 @@ public class EncryptContentPGP extends AbstractProcessor {
             .build();
 
     public static final PropertyDescriptor SYMMETRIC_KEY_ALGORITHM = new PropertyDescriptor.Builder()
-            .name("symmetric-key-algorithm")
-            .displayName("Symmetric-Key Algorithm")
+            .name("Symmetric-Key Algorithm")
             .description("Symmetric-Key Algorithm for encryption")
             .required(true)
             .defaultValue(SymmetricKeyAlgorithm.AES_256.toString())
@@ -110,8 +114,7 @@ public class EncryptContentPGP extends AbstractProcessor {
             .build();
 
     public static final PropertyDescriptor FILE_ENCODING = new PropertyDescriptor.Builder()
-            .name("file-encoding")
-            .displayName("File Encoding")
+            .name("File Encoding")
             .description("File Encoding for encryption")
             .required(true)
             .defaultValue(FileEncoding.BINARY.toString())
@@ -119,23 +122,20 @@ public class EncryptContentPGP extends AbstractProcessor {
             .build();
 
     public static final PropertyDescriptor PASSPHRASE = new PropertyDescriptor.Builder()
-            .name("passphrase")
-            .displayName("Passphrase")
+            .name("Passphrase")
             .description("Passphrase used for encrypting data with Password-Based Encryption")
             .sensitive(true)
             .addValidator(StandardValidators.NON_EMPTY_VALIDATOR)
             .build();
 
     public static final PropertyDescriptor PUBLIC_KEY_SERVICE = new PropertyDescriptor.Builder()
-            .name("public-key-service")
-            .displayName("Public Key Service")
+            .name("Public Key Service")
             .description("PGP Public Key Service for encrypting data with Public Key Encryption")
             .identifiesControllerService(PGPPublicKeyService.class)
             .build();
 
     public static final PropertyDescriptor PUBLIC_KEY_SEARCH = new PropertyDescriptor.Builder()
-            .name("public-key-search")
-            .displayName("Public Key Search")
+            .name("Public Key Search")
             .description("PGP Public Key Search will be used to match against the User ID or Key ID when formatted as uppercase hexadecimal string of 16 characters")
             .expressionLanguageSupported(ExpressionLanguageScope.FLOWFILE_ATTRIBUTES)
             .addValidator(StandardValidators.NON_EMPTY_EL_VALIDATOR)
@@ -208,6 +208,15 @@ public class EncryptContentPGP extends AbstractProcessor {
             getLogger().error("Encryption Failed {}", flowFile, e);
             session.transfer(flowFile, FAILURE);
         }
+    }
+
+    @Override
+    public void migrateProperties(PropertyConfiguration config) {
+        config.renameProperty("symmetric-key-algorithm", SYMMETRIC_KEY_ALGORITHM.getName());
+        config.renameProperty("file-encoding", FILE_ENCODING.getName());
+        config.renameProperty("passphrase", PASSPHRASE.getName());
+        config.renameProperty("public-key-service", PUBLIC_KEY_SERVICE.getName());
+        config.renameProperty("public-key-search", PUBLIC_KEY_SEARCH.getName());
     }
 
     /**

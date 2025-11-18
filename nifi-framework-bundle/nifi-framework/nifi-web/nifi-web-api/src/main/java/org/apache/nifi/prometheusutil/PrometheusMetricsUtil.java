@@ -22,8 +22,8 @@ import org.apache.nifi.components.AllowableValue;
 import org.apache.nifi.controller.status.ConnectionStatus;
 import org.apache.nifi.controller.status.PortStatus;
 import org.apache.nifi.controller.status.ProcessGroupStatus;
-import org.apache.nifi.controller.status.ProcessorStatus;
 import org.apache.nifi.controller.status.ProcessingPerformanceStatus;
+import org.apache.nifi.controller.status.ProcessorStatus;
 import org.apache.nifi.controller.status.RemoteProcessGroupStatus;
 import org.apache.nifi.controller.status.TransmissionStatus;
 import org.apache.nifi.controller.status.analytics.StatusAnalytics;
@@ -45,6 +45,7 @@ public class PrometheusMetricsUtil {
     protected static final String DEFAULT_LABEL_STRING = "";
     private static final double MAXIMUM_BACKPRESSURE = 1.0;
     private static final double UNDEFINED_BACKPRESSURE = -1.0;
+    private static final double NANOS_PER_MILLI = 1000000.0;
 
     public static CollectorRegistry createNifiMetrics(NiFiMetricsRegistry nifiMetricsRegistry, ProcessGroupStatus status,
                                                       String instId, String parentProcessGroupId, String compType, String metricsStrategy) {
@@ -84,7 +85,8 @@ public class PrometheusMetricsUtil {
         addProcessingPerformanceMetrics(nifiMetricsRegistry, status.getProcessingPerformanceStatus(),
                 instanceId, componentType, componentName, componentId, parentPGId);
 
-        nifiMetricsRegistry.setDataPoint(status.getProcessingNanos(), "TOTAL_TASK_DURATION",
+        // prometheus metric expects milliseconds
+        nifiMetricsRegistry.setDataPoint(status.getProcessingNanos() / NANOS_PER_MILLI, "TOTAL_TASK_DURATION",
                 instanceId, componentType, componentName, componentId, parentPGId);
 
         // Report metrics for child process groups if specified
@@ -182,8 +184,8 @@ public class PrometheusMetricsUtil {
 
             for (PortStatus portStatus : status.getInputPortStatus()) {
                 final String portComponentId = StringUtils.isEmpty(portStatus.getId()) ? DEFAULT_LABEL_STRING : portStatus.getId();
-                final String portComponentName = StringUtils.isEmpty(portStatus.getName()) ? DEFAULT_LABEL_STRING : portStatus.getId();
-                final String parentId = StringUtils.isEmpty(portStatus.getGroupId()) ? DEFAULT_LABEL_STRING : portStatus.getId();
+                final String portComponentName = StringUtils.isEmpty(portStatus.getName()) ? DEFAULT_LABEL_STRING : portStatus.getName();
+                final String parentId = StringUtils.isEmpty(portStatus.getGroupId()) ? DEFAULT_LABEL_STRING : portStatus.getGroupId();
                 final String portComponentType = "InputPort";
                 nifiMetricsRegistry.setDataPoint(portStatus.getFlowFilesSent(), "AMOUNT_FLOWFILES_SENT", instanceId, portComponentType, portComponentName, portComponentId, parentId);
                 nifiMetricsRegistry.setDataPoint(portStatus.getFlowFilesReceived(), "AMOUNT_FLOWFILES_RECEIVED", instanceId, portComponentType, portComponentName, portComponentId, parentId);
@@ -522,20 +524,20 @@ public class PrometheusMetricsUtil {
     private static void addProcessingPerformanceMetrics(final NiFiMetricsRegistry niFiMetricsRegistry, final ProcessingPerformanceStatus perfStatus, final String instanceId,
                                                         final String componentType, final String componentName, final String componentId, final String parentId) {
         if (perfStatus != null) {
-            niFiMetricsRegistry.setDataPoint(perfStatus.getCpuDuration() / 1000.0, "PROCESSING_PERFORMANCE_CPU_DURATION",
+            // convert base metrics from nanoseconds to milliseconds except for PROCESSING_PERFORMANCE_GC_DURATION which is already in milliseconds
+            niFiMetricsRegistry.setDataPoint(perfStatus.getCpuDuration() / NANOS_PER_MILLI, "PROCESSING_PERFORMANCE_CPU_DURATION",
                     instanceId, componentType, componentName, componentId, parentId, perfStatus.getIdentifier());
 
-            // Base metric already in milliseconds
             niFiMetricsRegistry.setDataPoint(perfStatus.getGarbageCollectionDuration(), "PROCESSING_PERFORMANCE_GC_DURATION",
                     instanceId, componentType, componentName, componentId, parentId, perfStatus.getIdentifier());
 
-            niFiMetricsRegistry.setDataPoint(perfStatus.getContentReadDuration() / 1000.0, "PROCESSING_PERFORMANCE_CONTENT_READ_DURATION",
+            niFiMetricsRegistry.setDataPoint(perfStatus.getContentReadDuration() / NANOS_PER_MILLI, "PROCESSING_PERFORMANCE_CONTENT_READ_DURATION",
                     instanceId, componentType, componentName, componentId, parentId, perfStatus.getIdentifier());
 
-            niFiMetricsRegistry.setDataPoint(perfStatus.getContentWriteDuration() / 1000.0, "PROCESSING_PERFORMANCE_CONTENT_WRITE_DURATION",
+            niFiMetricsRegistry.setDataPoint(perfStatus.getContentWriteDuration() / NANOS_PER_MILLI, "PROCESSING_PERFORMANCE_CONTENT_WRITE_DURATION",
                     instanceId, componentType, componentName, componentId, parentId, perfStatus.getIdentifier());
 
-            niFiMetricsRegistry.setDataPoint(perfStatus.getSessionCommitDuration() / 1000.0, "PROCESSING_PERFORMANCE_SESSION_COMMIT_DURATION",
+            niFiMetricsRegistry.setDataPoint(perfStatus.getSessionCommitDuration() / NANOS_PER_MILLI, "PROCESSING_PERFORMANCE_SESSION_COMMIT_DURATION",
                     instanceId, componentType, componentName, componentId, parentId, perfStatus.getIdentifier());
         }
     }

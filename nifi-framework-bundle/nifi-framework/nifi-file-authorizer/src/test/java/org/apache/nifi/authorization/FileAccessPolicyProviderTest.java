@@ -33,10 +33,12 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -88,6 +90,20 @@ public class FileAccessPolicyProviderTest {
             "      </policy>" +
             "  </policies>" +
             "</authorizations>";
+
+    private static final String FINGERPRINT = """
+            <?xml version="1.0" ?>
+            <accessPolicies>
+            <policy identifier="policy-1" resource="/flow" actions="READ">
+            <policyUser identifier="user-1"></policyUser>
+            <policyGroup identifier="group-1"></policyGroup>
+            <policyGroup identifier="group-2"></policyGroup>
+            </policy>
+            <policy identifier="policy-2" resource="/flow" actions="WRITE">
+            <policyUser identifier="user-2"></policyUser>
+            </policy>
+            </accessPolicies>
+            """.replaceAll("[\\r\\n]", "");
 
     private static final String TENANTS =
             "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
@@ -187,6 +203,7 @@ public class FileAccessPolicyProviderTest {
             ParameterLookup.EMPTY));
         when(configurationContext.getProperty(eq(FileUserGroupProvider.PROP_TENANTS_FILE))).thenReturn(new StandardPropertyValue(primaryTenants.getPath(), null, ParameterLookup.EMPTY));
         when(configurationContext.getProperty(eq(FileAccessPolicyProvider.PROP_INITIAL_ADMIN_IDENTITY))).thenReturn(new StandardPropertyValue(null, null, ParameterLookup.EMPTY));
+        when(configurationContext.getProperty(eq(FileAccessPolicyProvider.PROP_INITIAL_ADMIN_GROUP))).thenReturn(new StandardPropertyValue(null, null, ParameterLookup.EMPTY));
         when(configurationContext.getProperty(eq(FileAccessPolicyProvider.PROP_USER_GROUP_PROVIDER))).thenReturn(new StandardPropertyValue("user-group-provider", null,
             ParameterLookup.EMPTY));
         when(configurationContext.getProperties()).then((invocation) -> {
@@ -205,6 +222,11 @@ public class FileAccessPolicyProviderTest {
             final PropertyValue initialAdmin = configurationContext.getProperty(FileAccessPolicyProvider.PROP_INITIAL_ADMIN_IDENTITY);
             if (initialAdmin != null) {
                 properties.put(FileAccessPolicyProvider.PROP_INITIAL_ADMIN_IDENTITY, initialAdmin.getValue());
+            }
+
+            final PropertyValue initialAdminGroup = configurationContext.getProperty(FileAccessPolicyProvider.PROP_INITIAL_ADMIN_GROUP);
+            if (initialAdminGroup != null) {
+                properties.put(FileAccessPolicyProvider.PROP_INITIAL_ADMIN_GROUP, initialAdminGroup.getValue());
             }
 
             int i = 1;
@@ -229,6 +251,17 @@ public class FileAccessPolicyProviderTest {
                 }
             }
 
+            i = 1;
+            while (true) {
+                final String key = FileUserGroupProvider.PROP_INITIAL_GROUP_IDENTITY_PREFIX + i++;
+                final PropertyValue value = configurationContext.getProperty(key);
+                if (value == null) {
+                    break;
+                } else {
+                    properties.put(key, value.getValue());
+                }
+            }
+
             // ensure the initial admin is seeded into the user provider if appropriate
             if (properties.containsKey(FileAccessPolicyProvider.PROP_INITIAL_ADMIN_IDENTITY)) {
                 i = 0;
@@ -236,6 +269,18 @@ public class FileAccessPolicyProviderTest {
                     final String key = FileUserGroupProvider.PROP_INITIAL_USER_IDENTITY_PREFIX + i++;
                     if (!properties.containsKey(key)) {
                         properties.put(key, properties.get(FileAccessPolicyProvider.PROP_INITIAL_ADMIN_IDENTITY));
+                        break;
+                    }
+                }
+            }
+
+            // ensure the initial admin group is seeded into the user provider if appropriate
+            if (properties.containsKey(FileAccessPolicyProvider.PROP_INITIAL_ADMIN_GROUP)) {
+                i = 0;
+                while (true) {
+                    final String key = FileUserGroupProvider.PROP_INITIAL_GROUP_IDENTITY_PREFIX + i++;
+                    if (!properties.containsKey(key)) {
+                        properties.put(key, properties.get(FileAccessPolicyProvider.PROP_INITIAL_ADMIN_GROUP));
                         break;
                     }
                 }
@@ -350,7 +395,7 @@ public class FileAccessPolicyProviderTest {
         // setup NiFi properties to return a file that does not exist
         properties = mock(NiFiProperties.class);
         when(properties.getRestoreDirectory()).thenReturn(restoreAuthorizations.getParentFile());
-        when(properties.getFlowConfigurationFile()).thenReturn(new File("src/test/resources/does-not-exist.json.gz"));
+        when(properties.getFlowConfigurationFile()).thenReturn(null);
 
         userGroupProvider.setNiFiProperties(properties);
         accessPolicyProvider.setNiFiProperties(properties);
@@ -383,6 +428,155 @@ public class FileAccessPolicyProviderTest {
         }
 
         assertFalse(foundRootGroupPolicy);
+    }
+
+    @Test
+    public void testOnConfiguredWhenInitialAdminGroupProvided() throws Exception {
+        final String adminGroupName = "admin-group";
+
+        when(configurationContext.getProperty(eq(FileAccessPolicyProvider.PROP_INITIAL_ADMIN_GROUP)))
+                .thenReturn(new StandardPropertyValue(adminGroupName, null, ParameterLookup.EMPTY));
+
+        writeFile(primaryAuthorizations, EMPTY_AUTHORIZATIONS_CONCISE);
+        writeFile(primaryTenants, EMPTY_TENANTS_CONCISE);
+
+        userGroupProvider.onConfigured(configurationContext);
+        accessPolicyProvider.onConfigured(configurationContext);
+
+        final Set<Group> groups = userGroupProvider.getGroups();
+        final Group adminGroup = groups.iterator().next();
+        assertEquals(adminGroupName, adminGroup.getName());
+
+        final Set<AccessPolicy> policies = accessPolicyProvider.getAccessPolicies();
+        assertEquals(12, policies.size());
+
+        final String rootGroupResource = ResourceType.ProcessGroup.getValue() + "/" + ROOT_GROUP_ID;
+
+        boolean foundRootGroupPolicy = false;
+        for (AccessPolicy policy : policies) {
+            if (policy.getResource().equals(rootGroupResource)) {
+                foundRootGroupPolicy = true;
+                break;
+            }
+        }
+
+        assertTrue(foundRootGroupPolicy);
+    }
+
+    @Test
+    public void testOnConfiguredWhenInitialAdminGroupProvidedAndNoFlowExists() throws Exception {
+        // setup NiFi properties to return a file that does not exist
+        properties = mock(NiFiProperties.class);
+        when(properties.getRestoreDirectory()).thenReturn(restoreAuthorizations.getParentFile());
+        when(properties.getFlowConfigurationFile()).thenReturn(new File("src/test/resources/does-not-exist.json.gz"));
+
+        userGroupProvider.setNiFiProperties(properties);
+        accessPolicyProvider.setNiFiProperties(properties);
+
+        final String adminGroupName = "admin-group";
+
+        when(configurationContext.getProperty(eq(FileAccessPolicyProvider.PROP_INITIAL_ADMIN_GROUP)))
+                .thenReturn(new StandardPropertyValue(adminGroupName, null, ParameterLookup.EMPTY));
+
+        writeFile(primaryAuthorizations, EMPTY_AUTHORIZATIONS_CONCISE);
+        writeFile(primaryTenants, EMPTY_TENANTS_CONCISE);
+
+        userGroupProvider.onConfigured(configurationContext);
+        accessPolicyProvider.onConfigured(configurationContext);
+
+        final Set<Group> groups = userGroupProvider.getGroups();
+        final Group adminGroup = groups.iterator().next();
+        assertEquals(adminGroupName, adminGroup.getName());
+
+        final Set<AccessPolicy> policies = accessPolicyProvider.getAccessPolicies();
+        assertEquals(8, policies.size());
+
+        final String rootGroupResource = ResourceType.ProcessGroup.getValue() + "/" + ROOT_GROUP_ID;
+
+        boolean foundRootGroupPolicy = false;
+        for (AccessPolicy policy : policies) {
+            if (policy.getResource().equals(rootGroupResource)) {
+                foundRootGroupPolicy = true;
+                break;
+            }
+        }
+
+        assertFalse(foundRootGroupPolicy);
+    }
+
+    @Test
+    public void testOnConfiguredWhenInitialAdminGroupProvidedAndFlowIsNull() throws Exception {
+        // setup NiFi properties to return a file that does not exist
+        properties = mock(NiFiProperties.class);
+        when(properties.getRestoreDirectory()).thenReturn(restoreAuthorizations.getParentFile());
+        when(properties.getFlowConfigurationFile()).thenReturn(null);
+
+        userGroupProvider.setNiFiProperties(properties);
+        accessPolicyProvider.setNiFiProperties(properties);
+
+        final String adminGroupName = "admin-group";
+
+        when(configurationContext.getProperty(eq(FileAccessPolicyProvider.PROP_INITIAL_ADMIN_GROUP)))
+                .thenReturn(new StandardPropertyValue(adminGroupName, null, ParameterLookup.EMPTY));
+
+        writeFile(primaryAuthorizations, EMPTY_AUTHORIZATIONS_CONCISE);
+        writeFile(primaryTenants, EMPTY_TENANTS_CONCISE);
+
+        userGroupProvider.onConfigured(configurationContext);
+        accessPolicyProvider.onConfigured(configurationContext);
+
+        final Set<Group> groups = userGroupProvider.getGroups();
+        final Group adminGroup = groups.iterator().next();
+        assertEquals(adminGroupName, adminGroup.getName());
+
+        final Set<AccessPolicy> policies = accessPolicyProvider.getAccessPolicies();
+        assertEquals(8, policies.size());
+
+        final String rootGroupResource = ResourceType.ProcessGroup.getValue() + "/" + ROOT_GROUP_ID;
+
+        boolean foundRootGroupPolicy = false;
+        for (AccessPolicy policy : policies) {
+            if (policy.getResource().equals(rootGroupResource)) {
+                foundRootGroupPolicy = true;
+                break;
+            }
+        }
+
+        assertFalse(foundRootGroupPolicy);
+    }
+
+    @Test
+    public void testOnConfiguredWhenBothInitialAdminAndInitialAdminGroupProvided() throws Exception {
+        final String adminIdentity = "admin-user";
+        when(configurationContext.getProperty(eq(FileAccessPolicyProvider.PROP_INITIAL_ADMIN_IDENTITY)))
+                .thenReturn(new StandardPropertyValue(adminIdentity, null, ParameterLookup.EMPTY));
+
+        final String adminGroupName = "admin-group";
+        when(configurationContext.getProperty(eq(FileAccessPolicyProvider.PROP_INITIAL_ADMIN_GROUP)))
+                .thenReturn(new StandardPropertyValue(adminGroupName, null, ParameterLookup.EMPTY));
+
+        writeFile(primaryAuthorizations, EMPTY_AUTHORIZATIONS_CONCISE);
+        writeFile(primaryTenants, EMPTY_TENANTS_CONCISE);
+
+        userGroupProvider.onConfigured(configurationContext);
+        accessPolicyProvider.onConfigured(configurationContext);
+
+        final Set<User> users = userGroupProvider.getUsers();
+        final User adminUser = users.iterator().next();
+        assertEquals(adminIdentity, adminUser.getIdentity());
+
+        final Set<Group> groups = userGroupProvider.getGroups();
+        final Group adminGroup = groups.iterator().next();
+        assertEquals(adminGroupName, adminGroup.getName());
+        assertEquals(Set.of(adminUser.getIdentifier()), adminGroup.getUsers());
+
+        final Set<AccessPolicy> policies = accessPolicyProvider.getAccessPolicies();
+        assertEquals(12, policies.size());
+        // admin user is a member of admin group; no need to grant access right to the user itself
+        final Set<String> usersWithPolicies = policies.stream()
+                .flatMap(policy -> policy.getUsers().stream())
+                .collect(Collectors.toUnmodifiableSet());
+        assertEquals(Collections.emptySet(), usersWithPolicies);
     }
 
     @Test
@@ -848,6 +1042,30 @@ public class FileAccessPolicyProviderTest {
 
         final AccessPolicy deletedAccessPolicy = accessPolicyProvider.deleteAccessPolicy(policy);
         assertNull(deletedAccessPolicy);
+    }
+
+    @Test
+    public void testGetFingerprint() throws Exception {
+        writeFile(primaryAuthorizations, AUTHORIZATIONS);
+        writeFile(primaryTenants, TENANTS);
+
+        userGroupProvider.onConfigured(configurationContext);
+        accessPolicyProvider.onConfigured(configurationContext);
+
+        assertEquals(2, accessPolicyProvider.getAccessPolicies().size());
+
+        final String fingerprint = accessPolicyProvider.getFingerprint();
+        assertEquals(FINGERPRINT, fingerprint);
+    }
+
+    @Test
+    public void testInheritFingerprint() {
+        userGroupProvider.onConfigured(configurationContext);
+        accessPolicyProvider.onConfigured(configurationContext);
+
+        accessPolicyProvider.inheritFingerprint(FINGERPRINT);
+
+        assertEquals(2, accessPolicyProvider.getAccessPolicies().size());
     }
 
     private static void writeFile(final File file, final String content) throws Exception {

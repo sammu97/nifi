@@ -51,6 +51,7 @@ import org.apache.nifi.components.PropertyDescriptor;
 import org.apache.nifi.expression.ExpressionLanguageScope;
 import org.apache.nifi.flowfile.FlowFile;
 import org.apache.nifi.logging.ComponentLog;
+import org.apache.nifi.migration.PropertyConfiguration;
 import org.apache.nifi.processor.DataUnit;
 import org.apache.nifi.processor.ProcessContext;
 import org.apache.nifi.processor.ProcessSession;
@@ -112,7 +113,6 @@ public class PublishGCPubSub extends AbstractGCPubSubProcessor {
 
     public static final PropertyDescriptor MAX_BATCH_SIZE = new PropertyDescriptor.Builder()
             .name("Input Batch Size")
-            .displayName("Input Batch Size")
             .description("Maximum number of FlowFiles processed for each Processor invocation")
             .required(true)
             .expressionLanguageSupported(ExpressionLanguageScope.NONE)
@@ -122,7 +122,6 @@ public class PublishGCPubSub extends AbstractGCPubSubProcessor {
 
     public static final PropertyDescriptor MESSAGE_DERIVATION_STRATEGY = new PropertyDescriptor.Builder()
             .name("Message Derivation Strategy")
-            .displayName("Message Derivation Strategy")
             .description("The strategy used to publish the incoming FlowFile to the Google Cloud PubSub endpoint.")
             .required(true)
             .defaultValue(MessageDerivationStrategy.FLOWFILE_ORIENTED.getValue())
@@ -131,7 +130,6 @@ public class PublishGCPubSub extends AbstractGCPubSubProcessor {
 
     public static final PropertyDescriptor RECORD_READER = new PropertyDescriptor.Builder()
             .name("Record Reader")
-            .displayName("Record Reader")
             .description("The Record Reader to use for incoming FlowFiles")
             .identifiesControllerService(RecordReaderFactory.class)
             .expressionLanguageSupported(ExpressionLanguageScope.NONE)
@@ -141,7 +139,6 @@ public class PublishGCPubSub extends AbstractGCPubSubProcessor {
 
     public static final PropertyDescriptor RECORD_WRITER = new PropertyDescriptor.Builder()
             .name("Record Writer")
-            .displayName("Record Writer")
             .description("The Record Writer to use in order to serialize the data before sending to GCPubSub endpoint")
             .identifiesControllerService(RecordSetWriterFactory.class)
             .expressionLanguageSupported(ExpressionLanguageScope.NONE)
@@ -151,7 +148,6 @@ public class PublishGCPubSub extends AbstractGCPubSubProcessor {
 
     public static final PropertyDescriptor MAX_MESSAGE_SIZE = new PropertyDescriptor.Builder()
             .name("Maximum Message Size")
-            .displayName("Maximum Message Size")
             .description("The maximum size of a Google PubSub message in bytes. Defaults to 1 MB (1048576 bytes)")
             .dependsOn(MESSAGE_DERIVATION_STRATEGY, MessageDerivationStrategy.FLOWFILE_ORIENTED.getValue())
             .required(true)
@@ -160,8 +156,7 @@ public class PublishGCPubSub extends AbstractGCPubSubProcessor {
             .build();
 
     public static final PropertyDescriptor TOPIC_NAME = new PropertyDescriptor.Builder()
-            .name("gcp-pubsub-topic")
-            .displayName("Topic Name")
+            .name("Topic Name")
             .description("Name of the Google Cloud PubSub Topic")
             .required(true)
             .addValidator(StandardValidators.NON_EMPTY_VALIDATOR)
@@ -312,6 +307,12 @@ public class PublishGCPubSub extends AbstractGCPubSubProcessor {
         } else {
             throw new IllegalStateException(inputStrategy.getValue());
         }
+    }
+
+    @Override
+    public void migrateProperties(PropertyConfiguration config) {
+        super.migrateProperties(config);
+        config.renameProperty("gcp-pubsub-topic", TOPIC_NAME.getName());
     }
 
     private void onTriggerFlowFileStrategy(

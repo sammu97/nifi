@@ -55,6 +55,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.zip.GZIPInputStream;
@@ -448,8 +449,8 @@ public class FlowSynchronizationIT extends NiFiSystemIT {
         getClientUtil().updateReportingTaskProperties(reportingTask, reportingTaskProperties);
 
         // Start everything up on Node 1.
-        getClientUtil().enableControllerService(countService);
         getClientUtil().enableControllerService(sleepService);
+        getClientUtil().enableControllerService(countService);
         getClientUtil().startReportingTask(reportingTask);
         getClientUtil().waitForValidProcessor(count.getId()); // Now that service was enabled, wait for processor to become valid.
         getClientUtil().startProcessGroupComponents(group.getId());
@@ -484,6 +485,13 @@ public class FlowSynchronizationIT extends NiFiSystemIT {
         assertEquals(2, node2GroupContents.getConnections().size());
         assertEquals(1, node2GroupContents.getProcessors().size());
 
+        final ControllerServiceEntity node2SleepService = getNifiClient().getControllerServicesClient(DO_NOT_REPLICATE).getControllerService(sleepService.getId());
+        assertEquals(sleepService.getId(), node2SleepService.getId());
+        waitFor(() -> {
+            final ControllerServiceDTO updatedNode2SleepService = getNifiClient().getControllerServicesClient(DO_NOT_REPLICATE).getControllerService(sleepService.getId()).getComponent();
+            return updatedNode2SleepService.getState().equals("ENABLED");
+        });
+
         final Set<ControllerServiceEntity> groupServices = getNifiClient().getFlowClient(DO_NOT_REPLICATE).getControllerServices(group.getId()).getControllerServices();
         assertEquals(1, groupServices.size());
 
@@ -493,9 +501,16 @@ public class FlowSynchronizationIT extends NiFiSystemIT {
         assertEquals(serviceId, procProperties.get("Count Service"));
         assertEquals(countService.getId(), serviceId);
         assertEquals(count.getId(), node2CountProc.getId());
+
+        waitFor(() -> {
+            final ControllerServiceDTO updatedNode2CountService = getNifiClient().getControllerServicesClient(DO_NOT_REPLICATE).getControllerService(countService.getId()).getComponent();
+            return updatedNode2CountService.getState().equals("ENABLED");
+        });
+
         waitFor(() -> {
             final ProcessorDTO updatedNode2CountProc = getNifiClient().getProcessorClient(DO_NOT_REPLICATE).getProcessor(node2CountProc.getId()).getComponent();
-            return updatedNode2CountProc.getState().equals(RUNNING_STATE);
+            final String processorState = updatedNode2CountProc.getState();
+            return RUNNING_STATE.equals(processorState);
         });
 
         final PortDTO node2InputPort = node2GroupContents.getInputPorts().iterator().next().getComponent();
@@ -512,13 +527,6 @@ public class FlowSynchronizationIT extends NiFiSystemIT {
         waitFor(() -> {
             final PortDTO updatedNode2OutputPort = getNifiClient().getOutputPortClient(DO_NOT_REPLICATE).getOutputPort(node2OutputPort.getId()).getComponent();
             return updatedNode2OutputPort.getState().equals(RUNNING_STATE);
-        });
-
-        final ControllerServiceEntity node2SleepService = getNifiClient().getControllerServicesClient(DO_NOT_REPLICATE).getControllerService(sleepService.getId());
-        assertEquals(sleepService.getId(), node2SleepService.getId());
-        waitFor(() -> {
-            final ControllerServiceDTO updatedNode2SleepService = getNifiClient().getControllerServicesClient(DO_NOT_REPLICATE).getControllerService(sleepService.getId()).getComponent();
-            return updatedNode2SleepService.getState().equals("ENABLED");
         });
 
         waitFor(() -> {
@@ -581,6 +589,7 @@ public class FlowSynchronizationIT extends NiFiSystemIT {
         getClientUtil().enableControllerService(countC);
         getClientUtil().enableControllerService(countB);
         getClientUtil().enableControllerService(countA);
+        getClientUtil().waitForControllerServicesEnabled(countC.getParentGroupId(), List.of(countC.getId(), countB.getId(), countA.getId()));
 
         getClientUtil().startProcessor(countFlowFiles);
 
@@ -597,9 +606,14 @@ public class FlowSynchronizationIT extends NiFiSystemIT {
 
         // Delete the CountFlowFiles processor, and countB and countC services, disable A.
         getClientUtil().stopProcessor(countFlowFiles);
+        // Ensure the processor has fully stopped before disabling services to avoid race conditions
+        getClientUtil().waitForStoppedProcessor(countFlowFiles.getId());
         getNifiClient().getConnectionClient().deleteConnection(connection);
         getNifiClient().getProcessorClient().deleteProcessor(countFlowFiles);
-        getClientUtil().disableControllerServices("root", true);
+        // Disable the specific controller services in dependency order before deletion
+        getClientUtil().disableControllerService(countA);
+        getClientUtil().disableControllerService(countB);
+        getClientUtil().disableControllerService(countC);
         getNifiClient().getControllerServicesClient().deleteControllerService(countC);
         getNifiClient().getControllerServicesClient().deleteControllerService(countB);
 

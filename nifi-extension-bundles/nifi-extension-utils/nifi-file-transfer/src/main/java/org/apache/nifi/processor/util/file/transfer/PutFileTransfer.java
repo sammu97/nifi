@@ -62,10 +62,6 @@ public abstract class PutFileTransfer<T extends FileTransfer> extends AbstractPr
             REL_REJECT
     );
 
-    public PutFileTransfer() {
-        super();
-    }
-
     @Override
     public Set<Relationship> getRelationships() {
         return RELATIONSHIPS;
@@ -135,7 +131,7 @@ public abstract class PutFileTransfer<T extends FileTransfer> extends AbstractPr
 
                     String fullPathWithSlash = fullPathRef.get();
                     if (!fullPathWithSlash.startsWith("/")) {
-                        fullPathWithSlash = "/" + fullPathWithSlash;
+                        fullPathWithSlash = "/" + fullPathWithSlash; // NOPMD
                     }
                     final String destinationUri = transfer.getProtocolName() + "://" + hostname + fullPathWithSlash;
                     session.getProvenanceReporter().send(flowFile, destinationUri, millis);
@@ -257,6 +253,7 @@ public abstract class PutFileTransfer<T extends FileTransfer> extends AbstractPr
                 transferFile = false;
                 penalizeFile = true;
                 logger.warn("Resolved filename conflict for {} as configured by routing to FAILURE relationship.", flowFile);
+                break;
             default:
                 break;
         }

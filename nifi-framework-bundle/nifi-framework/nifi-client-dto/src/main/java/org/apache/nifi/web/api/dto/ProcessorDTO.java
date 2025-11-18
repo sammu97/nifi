@@ -49,15 +49,12 @@ public class ProcessorDTO extends ComponentDTO {
     private Boolean executionNodeRestricted;
     private Boolean multipleVersionsAvailable;
     private String inputRequirement;
+    private String physicalState;
 
     private ProcessorConfigDTO config;
 
     private Collection<String> validationErrors;
     private String validationStatus;
-
-    public ProcessorDTO() {
-        super();
-    }
 
     /**
      * The name of this processor.
@@ -234,6 +231,21 @@ public class ProcessorDTO extends ComponentDTO {
     public void setInputRequirement(String inputRequirement) {
         this.inputRequirement = inputRequirement;
     }
+
+    /**
+     * @return The physical state of this processor, including transition states such as STARTING and STOPPING
+     */
+    @Schema(description = "The physical state of the processor, including transition states",
+            allowableValues = {"RUNNING", "STOPPED", "DISABLED", "STARTING", "STOPPING", "RUN_ONCE"}
+    )
+    public String getPhysicalState() {
+        return physicalState;
+    }
+
+    public void setPhysicalState(String physicalState) {
+        this.physicalState = physicalState;
+    }
+
 
     /**
      * @return whether this processor supports batching

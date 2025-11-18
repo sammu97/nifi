@@ -15,14 +15,44 @@
  * limitations under the License.
  */
 
-import { Component } from '@angular/core';
+import { Component, inject } from '@angular/core';
 import { Store } from '@ngrx/store';
 import { StandardContentViewerState } from '../../../state';
 import { FormBuilder, FormGroup } from '@angular/forms';
-import { isDefinedAndNotNull, selectQueryParams } from '@nifi/shared';
+import {
+    isDefinedAndNotNull,
+    selectQueryParams,
+    CodeMirrorConfig,
+    jsonHighlightStyle,
+    xmlHighlightStyle,
+    yamlHighlightStyle
+} from '@nifi/shared';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { ContentViewerService } from '../service/content-viewer.service';
 import { HttpErrorResponse } from '@angular/common/http';
+import { EditorState, Extension, Prec } from '@codemirror/state';
+import {
+    bracketMatching,
+    foldGutter,
+    foldKeymap,
+    indentOnInput,
+    indentUnit,
+    syntaxHighlighting
+} from '@codemirror/language';
+import {
+    crosshairCursor,
+    EditorView,
+    highlightActiveLine,
+    highlightActiveLineGutter,
+    keymap,
+    lineNumbers,
+    rectangularSelection
+} from '@codemirror/view';
+import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
+import { markdown } from '@codemirror/lang-markdown';
+import { xml } from '@codemirror/lang-xml';
+import { yaml } from '@codemirror/lang-yaml';
+import { json } from '@codemirror/lang-json';
 
 @Component({
     selector: 'standard-content-viewer',
@@ -31,9 +61,27 @@ import { HttpErrorResponse } from '@angular/common/http';
     standalone: false
 })
 export class StandardContentViewer {
+    private formBuilder = inject(FormBuilder);
+    private store = inject<Store<StandardContentViewerState>>(Store);
+    private contentViewerService = inject(ContentViewerService);
+
     contentFormGroup: FormGroup;
 
-    private mode = 'text/plain';
+    private _codemirrorConfig: CodeMirrorConfig = {
+        plugins: [],
+        focusOnInit: true
+    };
+
+    // Dynamic config getter that includes runtime state
+    get codemirrorConfig(): CodeMirrorConfig {
+        return {
+            ...this._codemirrorConfig,
+            disabled: true,
+            readOnly: true
+        };
+    }
+
+    // Remove the unused languageConfig object
     private ref: string | null = null;
     private mimeTypeDisplayName: string | null = null;
     private clientId: string | undefined = undefined;
@@ -41,11 +89,7 @@ export class StandardContentViewer {
     error: string | null = null;
     contentLoaded = false;
 
-    constructor(
-        private formBuilder: FormBuilder,
-        private store: Store<StandardContentViewerState>,
-        private contentViewerService: ContentViewerService
-    ) {
+    constructor() {
         this.contentFormGroup = this.formBuilder.group({
             value: '',
             formatted: 'true'
@@ -69,7 +113,64 @@ export class StandardContentViewer {
 
     loadContent(): void {
         if (this.ref && this.mimeTypeDisplayName) {
-            this.setMode(this.mimeTypeDisplayName);
+            // Base extensions that are always included
+            const baseExtensions: Extension[] = [
+                lineNumbers(),
+                history(),
+                indentUnit.of('    '),
+                EditorView.lineWrapping,
+                rectangularSelection(),
+                crosshairCursor(),
+                EditorState.allowMultipleSelections.of(true),
+                indentOnInput(),
+                highlightActiveLine(),
+                [highlightActiveLineGutter(), Prec.highest(lineNumbers())],
+                bracketMatching(),
+                EditorView.contentAttributes.of({ 'aria-label': 'Code Editor' })
+            ];
+
+            // Add language-specific extensions based on mimeTypeDisplayName
+            const languageExtensions: Extension[] = [];
+            switch (this.mimeTypeDisplayName) {
+                case 'json':
+                case 'avro':
+                    languageExtensions.push(
+                        json(),
+                        syntaxHighlighting(jsonHighlightStyle),
+                        foldGutter(),
+                        keymap.of([...defaultKeymap, ...historyKeymap, ...foldKeymap])
+                    );
+                    break;
+                case 'xml':
+                    languageExtensions.push(
+                        xml(),
+                        syntaxHighlighting(xmlHighlightStyle),
+                        foldGutter(),
+                        keymap.of([...defaultKeymap, ...historyKeymap, ...foldKeymap])
+                    );
+                    break;
+                case 'yaml':
+                    languageExtensions.push(
+                        yaml(),
+                        syntaxHighlighting(yamlHighlightStyle),
+                        foldGutter(),
+                        keymap.of([...defaultKeymap, ...historyKeymap, ...foldKeymap])
+                    );
+                    break;
+                case 'markdown':
+                    languageExtensions.push(markdown(), keymap.of([...defaultKeymap, ...historyKeymap]));
+                    break;
+                // For text, csv, and other cases, no specific language extension is needed
+                case 'text':
+                case 'csv':
+                default:
+                    // No specific language extension, will use plain text
+                    languageExtensions.push(keymap.of([...defaultKeymap, ...historyKeymap]));
+                    break;
+            }
+
+            // Combine base extensions with language-specific extensions
+            this._codemirrorConfig.plugins = [...baseExtensions, ...languageExtensions];
 
             this.contentLoaded = false;
 
@@ -101,38 +202,5 @@ export class StandardContentViewer {
                     }
                 });
         }
-    }
-
-    private setMode(mimeTypeDisplayName: string): void {
-        switch (mimeTypeDisplayName) {
-            case 'json':
-            case 'avro':
-                this.mode = 'application/json';
-                break;
-            case 'xml':
-                this.mode = 'application/xml';
-                break;
-            case 'yaml':
-                this.mode = 'text/x-yaml';
-                break;
-            case 'text':
-                this.mode = 'text/plain';
-                break;
-            case 'csv':
-                this.mode = 'text/csv';
-                break;
-        }
-    }
-
-    getOptions(): any {
-        return {
-            theme: 'nifi',
-            mode: this.mode,
-            lineNumbers: true,
-            matchBrackets: true,
-            foldGutter: true,
-            gutters: ['CodeMirror-linenumbers', 'CodeMirror-foldgutter'],
-            readOnly: true
-        };
     }
 }

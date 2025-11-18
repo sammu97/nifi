@@ -18,6 +18,7 @@ package org.apache.nifi.web.dao.impl;
 
 import org.apache.commons.lang3.StringUtils;
 import org.apache.nifi.bundle.BundleCoordinate;
+import org.apache.nifi.components.ConfigVerificationResult;
 import org.apache.nifi.components.ConfigurableComponent;
 import org.apache.nifi.components.state.Scope;
 import org.apache.nifi.components.state.StateMap;
@@ -38,7 +39,6 @@ import org.apache.nifi.logging.LogRepository;
 import org.apache.nifi.logging.StandardLoggingContext;
 import org.apache.nifi.logging.repository.NopLogRepository;
 import org.apache.nifi.nar.ExtensionManager;
-import org.apache.nifi.components.ConfigVerificationResult;
 import org.apache.nifi.processor.ProcessContext;
 import org.apache.nifi.processor.Relationship;
 import org.apache.nifi.processor.SimpleProcessLogger;
@@ -50,6 +50,7 @@ import org.apache.nifi.util.FormatUtils;
 import org.apache.nifi.web.NiFiCoreException;
 import org.apache.nifi.web.ResourceNotFoundException;
 import org.apache.nifi.web.api.dto.BundleDTO;
+import org.apache.nifi.web.api.dto.ComponentStateDTO;
 import org.apache.nifi.web.api.dto.ConfigVerificationResultDTO;
 import org.apache.nifi.web.api.dto.ProcessorConfigDTO;
 import org.apache.nifi.web.api.dto.ProcessorDTO;
@@ -111,12 +112,13 @@ public class StandardProcessorDAO extends ComponentDAO implements ProcessorDAO {
         }
 
         // get the group to add the processor to
-        ProcessGroup group = locateProcessGroup(flowController, groupId);
+        final ProcessGroup group = locateProcessGroup(flowController, groupId);
 
         try {
             // attempt to create the processor
             final BundleCoordinate bundleCoordinate = BundleUtils.getBundle(flowController.getExtensionManager(), processorDTO.getType(), processorDTO.getBundle());
-            ProcessorNode processor = flowController.getFlowManager().createProcessor(processorDTO.getType(), processorDTO.getId(), bundleCoordinate);
+            final ProcessorNode processor = flowController.getFlowManager().createProcessor(processorDTO.getType(), processorDTO.getId(), bundleCoordinate);
+            processor.setProcessGroup(group);
 
             // ensure we can perform the update before we add the processor to the flow
             verifyUpdate(processor, processorDTO);
@@ -128,8 +130,9 @@ public class StandardProcessorDAO extends ComponentDAO implements ProcessorDAO {
             configureProcessor(processor, processorDTO);
 
             // Notify the processor node that the configuration (properties, e.g.) has been restored
+            final Class<?> componentClass = processor.getProcessor() == null ? null : processor.getProcessor().getClass();
             final StandardProcessContext processContext = new StandardProcessContext(processor, flowController.getControllerServiceProvider(),
-                    flowController.getStateManagerProvider().getStateManager(processor.getProcessor().getIdentifier()), () -> false, flowController);
+                    flowController.getStateManagerProvider().getStateManager(processor.getProcessor().getIdentifier(), componentClass), () -> false, flowController);
             processor.onConfigurationRestored(processContext);
 
             return processor;
@@ -292,12 +295,10 @@ public class StandardProcessorDAO extends ComponentDAO implements ProcessorDAO {
 
         // validate the concurrent tasks based on the scheduling strategy
         if (isNotNull(config.getConcurrentlySchedulableTaskCount())) {
-            switch (schedulingStrategy) {
-                case TIMER_DRIVEN:
-                    if (config.getConcurrentlySchedulableTaskCount() <= 0) {
-                        validationErrors.add("Concurrent tasks must be greater than 0.");
-                    }
-                    break;
+            if (schedulingStrategy == SchedulingStrategy.TIMER_DRIVEN) {
+                if (config.getConcurrentlySchedulableTaskCount() <= 0) {
+                    validationErrors.add("Concurrent tasks must be greater than 0.");
+                }
             }
         }
 
@@ -413,7 +414,15 @@ public class StandardProcessorDAO extends ComponentDAO implements ProcessorDAO {
                         case DISABLED:
                             processor.verifyCanDisable();
                             break;
+                        case STARTING:
+                        case STOPPING:
+                            // These are internal transition states and should not be set directly via API
+                            throw new IllegalArgumentException("Cannot set processor state to " + purposedScheduledState);
                     }
+                } else if (purposedScheduledState == ScheduledState.STOPPED && processor.getPhysicalScheduledState() == ScheduledState.STARTING) {
+                    // Handle special case: verify stopping a processor that's physically starting
+                    processor.getProcessGroup().verifyCanScheduleComponentsIndividually();
+                    processor.verifyCanStop();
                 }
             } catch (IllegalArgumentException iae) {
                 throw new IllegalArgumentException(String.format(
@@ -542,15 +551,24 @@ public class StandardProcessorDAO extends ComponentDAO implements ProcessorDAO {
                         case RUN_ONCE:
                             parentGroup.runProcessorOnce(processor, () -> parentGroup.stopProcessor(processor));
                             break;
+                        case STARTING:
+                        case STOPPING:
+                            // These are internal transition states and should not be set directly via API
+                            throw new IllegalStateException("Cannot set processor state to " + purposedScheduledState);
                     }
                 } catch (IllegalStateException | ComponentLifeCycleException ise) {
                     throw new NiFiCoreException(ise.getMessage(), ise);
                 } catch (RejectedExecutionException ree) {
                     throw new NiFiCoreException("Unable to schedule all tasks for the specified processor.", ree);
-                } catch (NullPointerException npe) {
-                    throw new NiFiCoreException("Unable to update processor run state.", npe);
                 } catch (Exception e) {
-                    throw new NiFiCoreException("Unable to update processor run state: " + e, e);
+                    throw new NiFiCoreException("Unable to update processor [%s] run state: %s".formatted(processor, e), e);
+                }
+            } else if  (purposedScheduledState == ScheduledState.STOPPED && processor.getPhysicalScheduledState() == ScheduledState.STARTING) {
+                // Handle special case: allow stopping a processor that's physically starting
+                try {
+                    parentGroup.stopProcessor(processor);
+                } catch (Exception e) {
+                    throw new NiFiCoreException("Unable to stop starting processor [%s]: %s".formatted(processor, e), e);
                 }
             }
         }
@@ -610,9 +628,9 @@ public class StandardProcessorDAO extends ComponentDAO implements ProcessorDAO {
     }
 
     @Override
-    public void clearState(String processorId) {
+    public void clearState(final String processorId, final ComponentStateDTO componentStateDTO) {
         final ProcessorNode processor = locateProcessor(processorId);
-        componentStateDAO.clearState(processor);
+        componentStateDAO.clearState(processor, componentStateDTO);
     }
 
     @Autowired

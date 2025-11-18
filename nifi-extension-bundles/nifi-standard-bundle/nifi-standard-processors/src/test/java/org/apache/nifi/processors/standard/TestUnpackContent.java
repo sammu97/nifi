@@ -21,6 +21,7 @@ import net.lingala.zip4j.model.ZipParameters;
 import net.lingala.zip4j.model.enums.EncryptionMethod;
 import org.apache.commons.io.Charsets;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.Strings;
 import org.apache.nifi.flowfile.attributes.CoreAttributes;
 import org.apache.nifi.util.MockFlowFile;
 import org.apache.nifi.util.TestRunner;
@@ -65,7 +66,7 @@ public class TestUnpackContent {
         Map<String, String> attributes = new HashMap<>(1);
         Map<String, String> attributes2 = new HashMap<>(1);
         attributes.put("mime.type", UnpackContent.PackageFormat.TAR_FORMAT.getMimeType());
-        attributes2.put("mime.type", UnpackContent.PackageFormat.X_TAR_FORMAT.getMimeType());
+        attributes2.put("mime.type", "application/tar");
         autoUnpackRunner.enqueue(dataPath.resolve("data.tar"), attributes);
         autoUnpackRunner.enqueue(dataPath.resolve("data.tar"), attributes2);
         runner.run(2);
@@ -318,10 +319,10 @@ public class TestUnpackContent {
         for (final MockFlowFile flowFile : unpacked) {
             final String outputFilename = flowFile.getAttribute(CoreAttributes.FILENAME.key());
             assertTrue(StringUtils.containsNone(outputFilename, "?"), "filename contains '?': " + outputFilename);
-            assertTrue(StringUtils.contains(outputFilename, specialChar), "filename missing '%s': %s".formatted(specialChar, outputFilename));
+            assertTrue(Strings.CS.contains(outputFilename, specialChar), "filename missing '%s': %s".formatted(specialChar, outputFilename));
             final String path = flowFile.getAttribute(CoreAttributes.PATH.key());
             assertTrue(StringUtils.containsNone(path, "?"), "path contains '?': " + path);
-            assertTrue(StringUtils.contains(path, specialChar), "path missing '%s': %s".formatted(specialChar, path));
+            assertTrue(Strings.CS.contains(path, specialChar), "path missing '%s': %s".formatted(specialChar, path));
         }
     }
 

@@ -22,8 +22,11 @@ import org.apache.nifi.controller.queue.QueueSize;
 import org.apache.nifi.reporting.BulletinRepository;
 
 import java.io.InputStream;
+import java.time.Duration;
 import java.util.Map;
+import java.util.OptionalLong;
 import java.util.Set;
+import java.util.regex.Pattern;
 
 public interface StatelessDataflow {
     /**
@@ -68,10 +71,16 @@ public interface StatelessDataflow {
     void initialize(StatelessDataflowInitializationContext initializationContext);
 
     default void shutdown() {
-        shutdown(true, false);
+        shutdown(true, false, Duration.ofMillis(0));
     }
 
-    void shutdown(boolean triggerComponentShutdown, boolean interruptProcessors);
+    /**
+     * Shuts down the dataflow, stopping all components and releasing all resources.
+     * @param triggerComponentShutdown whether or not to trigger the shutdown of components (e.g., invoking @OnShutdown methods)
+     * @param interruptProcessors whether or not to interrupt any processors and tasks that are running
+     * @param gracefulShutdownPeriod if interruptProcessors is true, this specifies the amount of time to wait for processors to finish before interrupting them.
+     */
+    void shutdown(boolean triggerComponentShutdown, boolean interruptProcessors, Duration gracefulShutdownPeriod);
 
     StatelessDataflowValidation performValidation();
 
@@ -97,10 +106,9 @@ public interface StatelessDataflow {
 
     void setComponentStates(Map<String, String> componentStates, Scope scope);
 
-    boolean isSourcePrimaryNodeOnly();
-
-    long getSourceYieldExpiration();
-
     BulletinRepository getBulletinRepository();
 
+    OptionalLong getCounter(String componentId, String counterName);
+
+    Map<String, Long> getCounters(Pattern counterNamePattern);
 }

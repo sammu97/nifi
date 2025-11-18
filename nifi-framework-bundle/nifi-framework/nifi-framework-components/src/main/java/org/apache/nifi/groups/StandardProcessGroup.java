@@ -69,6 +69,7 @@ import org.apache.nifi.flow.VersionedExternalFlow;
 import org.apache.nifi.flow.VersionedProcessGroup;
 import org.apache.nifi.flow.synchronization.StandardVersionedComponentSynchronizer;
 import org.apache.nifi.flow.synchronization.VersionedFlowSynchronizationContext;
+import org.apache.nifi.lifecycle.ProcessorStopLifecycleMethods;
 import org.apache.nifi.logging.LogRepository;
 import org.apache.nifi.logging.LogRepositoryFactory;
 import org.apache.nifi.nar.ExtensionManager;
@@ -213,6 +214,10 @@ public final class StandardProcessGroup implements ProcessGroup {
     private static final long DEFAULT_BACKPRESSURE_OBJECT = 10_000L;
     private static final String DEFAULT_BACKPRESSURE_DATA_SIZE = "1 GB";
     private static final Pattern INVALID_DIRECTORY_NAME_CHARACTERS = Pattern.compile("[\\s\\<\\>:\\'\\\"\\/\\\\\\|\\?\\*]");
+    private static final String PATH_SEPARATOR = "/";
+    private static final String STANDARD_PROCESS_GROUP_NAME = "StandardProcessGroup";
+
+    private final Map<String, String> loggingAttributes = new ConcurrentHashMap<>();
     private volatile String logFileSuffix;
 
 
@@ -285,6 +290,7 @@ public final class StandardProcessGroup implements ProcessGroup {
     @Override
     public void setParent(final ProcessGroup newParent) {
         parent.set(newParent);
+        setLoggingAttributes();
     }
 
     @Override
@@ -324,6 +330,7 @@ public final class StandardProcessGroup implements ProcessGroup {
         }
 
         this.name.set(name);
+        setLoggingAttributes();
     }
 
     @Override
@@ -519,6 +526,7 @@ public final class StandardProcessGroup implements ProcessGroup {
                     }
                 }
 
+                statelessGroupNode.setDesiredState(ScheduledState.RUNNING);
                 if (getStatelessScheduledState() == StatelessGroupScheduledState.RUNNING) {
                     LOG.info("Triggered to start {} but it is already running", this);
                     return;
@@ -572,6 +580,7 @@ public final class StandardProcessGroup implements ProcessGroup {
 
                 LOG.info("Stopping {} from running", this);
 
+                statelessGroupNode.setDesiredState(ScheduledState.STOPPED);
                 final CompletableFuture<Void> future = scheduler.stopStatelessGroup(statelessGroupNode);
                 return future;
             } finally {
@@ -586,14 +595,15 @@ public final class StandardProcessGroup implements ProcessGroup {
     }
 
     @Override
-    public CompletableFuture<Void> stopComponents() {
+    public CompletableFuture<Void> stopComponents(final ProcessorStopLifecycleMethods processorStopLifecycleMethods) {
         readLock.lock();
         try {
             final List<CompletableFuture<Void>> futures = new ArrayList<>();
 
             getProcessors().stream().filter(STOP_PROCESSORS_FILTER).forEach(node -> {
                 try {
-                    futures.add(node.getProcessGroup().stopProcessor(node));
+                    final StandardProcessGroup immediateGroup = (StandardProcessGroup) node.getProcessGroup();
+                    futures.add(immediateGroup.stopProcessor(node, processorStopLifecycleMethods));
                 } catch (final Throwable t) {
                     LOG.error("Unable to stop processor {}", node.getIdentifier(), t);
                 }
@@ -652,15 +662,16 @@ public final class StandardProcessGroup implements ProcessGroup {
         return this.scheduler.getActiveThreadCount(statelessGroupNode) > 0;
     }
 
-    private StateManager getStateManager(final String componentId) {
-        return stateManagerProvider.getStateManager(componentId);
+    private StateManager getStateManager(final ProcessorNode processorNode) {
+        final Class<?> componentClass = processorNode.getProcessor() == null ? null : processorNode.getProcessor().getClass();
+        return stateManagerProvider.getStateManager(processorNode.getIdentifier(), componentClass);
     }
 
     private void shutdown(final ProcessGroup procGroup) {
         for (final ProcessorNode node : procGroup.getProcessors()) {
             try (final NarCloseable ignored = NarCloseable.withComponentNarLoader(extensionManager, node.getProcessor().getClass(), node.getIdentifier())) {
                 final StandardProcessContext processContext = new StandardProcessContext(node, controllerServiceProvider,
-                    getStateManager(node.getIdentifier()), () -> false, nodeTypeProvider);
+                    getStateManager(node), () -> false, nodeTypeProvider);
                 ReflectionUtils.quietlyInvokeMethodsWithAnnotation(OnShutdown.class, node.getProcessor(), processContext);
             }
         }
@@ -1226,7 +1237,7 @@ public final class StandardProcessGroup implements ProcessGroup {
 
             try (final NarCloseable ignored = NarCloseable.withComponentNarLoader(extensionManager, processor.getProcessor().getClass(), processor.getIdentifier())) {
                 final StandardProcessContext processContext = new StandardProcessContext(processor, controllerServiceProvider,
-                    getStateManager(processor.getIdentifier()), () -> false, nodeTypeProvider);
+                    getStateManager(processor), () -> false, nodeTypeProvider);
                 ReflectionUtils.quietlyInvokeMethodsWithAnnotation(OnRemoved.class, processor.getProcessor(), processContext);
             } catch (final Exception e) {
                 throw new ComponentLifeCycleException("Failed to invoke 'OnRemoved' methods of processor with id " + processor.getIdentifier(), e);
@@ -1750,7 +1761,7 @@ public final class StandardProcessGroup implements ProcessGroup {
             processor.reloadAdditionalResourcesIfNecessary();
 
             return scheduler.runProcessorOnce(processor, stopCallback);
-        } catch (Exception e) {
+        } catch (final Exception e) {
             processor.getLogger().error("Error while running processor {} once.", processor, e);
             return stopProcessor(processor);
         } finally {
@@ -1824,6 +1835,17 @@ public final class StandardProcessGroup implements ProcessGroup {
 
     @Override
     public CompletableFuture<Void> stopProcessor(final ProcessorNode processor) {
+        // When using Stateless Engine, we do not want to trigger lifecycle methods because the Stateless engine will create N
+        // ProcessorNode's, one for each Concurrent Task and use those. Therefore, we do not want to trigger any lifecycle events
+        // on this ProcessorNode object, but we do need to call stopProcessor() to ensure that we keep appropriate state
+        // about whether the Processor is scheduled, etc.
+        final ProcessorStopLifecycleMethods lifecycleMethods = resolveExecutionEngine() == ExecutionEngine.STATELESS
+            ? ProcessorStopLifecycleMethods.TRIGGER_NONE : ProcessorStopLifecycleMethods.TRIGGER_ALL;
+
+        return stopProcessor(processor, lifecycleMethods);
+    }
+
+    private CompletableFuture<Void> stopProcessor(final ProcessorNode processor, final ProcessorStopLifecycleMethods lifecycleMethods) {
         readLock.lock();
         try {
             if (!processors.containsKey(processor.getIdentifier())) {
@@ -1835,7 +1857,7 @@ public final class StandardProcessGroup implements ProcessGroup {
                 throw new IllegalStateException("Processor is disabled");
             }
 
-            return scheduler.stopProcessor(processor);
+            return scheduler.stopProcessor(processor, lifecycleMethods);
         } finally {
             readLock.unlock();
         }
@@ -3572,6 +3594,7 @@ public final class StandardProcessGroup implements ProcessGroup {
                 parent.onComponentModified();
             }
 
+            setLoggingAttributes();
             scheduler.submitFrameworkTask(() -> synchronizeWithFlowRegistry(flowManager));
         } finally {
             writeLock.unlock();
@@ -3642,15 +3665,11 @@ public final class StandardProcessGroup implements ProcessGroup {
     }
 
     @Override
-    public void disconnectVersionControl(final boolean removeVersionedComponentIds) {
+    public void disconnectVersionControl() {
         writeLock.lock();
         try {
             this.versionControlInfo.set(null);
-
-            if (removeVersionedComponentIds) {
-                // remove version component ids from each component (until another versioned PG is encountered)
-                applyVersionedComponentIds(this, id -> null);
-            }
+            setLoggingAttributes();
         } finally {
             writeLock.unlock();
         }
@@ -3836,7 +3855,6 @@ public final class StandardProcessGroup implements ProcessGroup {
             .ignoreLocalModifications(!verifyNotDirty)
             .updateDescendantVersionedFlows(updateDescendantVersionedFlows)
             .updateGroupSettings(updateSettings)
-            .updateGroupVersionControlSnapshot(true)
             .updateRpgUrls(false)
             .propertyDecryptor(value -> null)
             .build();
@@ -3857,8 +3875,10 @@ public final class StandardProcessGroup implements ProcessGroup {
     }
 
     private ProcessContext createProcessContext(final ProcessorNode processorNode) {
+        final org.apache.nifi.processor.Processor processor = processorNode.getProcessor();
+        final Class<?> componentClass = processor == null ? null : processor.getClass();
         return new StandardProcessContext(processorNode, controllerServiceProvider,
-            stateManagerProvider.getStateManager(processorNode.getIdentifier()), () -> false, nodeTypeProvider);
+            stateManagerProvider.getStateManager(processorNode.getIdentifier(), componentClass), () -> false, nodeTypeProvider);
     }
 
     private ConfigurationContext createConfigurationContext(final ComponentNode component) {
@@ -3965,8 +3985,12 @@ public final class StandardProcessGroup implements ProcessGroup {
             final FlowComparator flowComparator = new StandardFlowComparator(snapshotFlow, currentFlow, getAncestorServiceIds(),
                 new EvolvingDifferenceDescriptor(), encryptor::decrypt, VersionedComponent::getIdentifier, FlowComparatorVersionedStrategy.SHALLOW);
             final FlowComparison comparison = flowComparator.compare();
-            final Set<FlowDifference> differences = comparison.getDifferences().stream()
-                .filter(difference -> !FlowDifferenceFilters.isEnvironmentalChange(difference, versionedGroup, flowManager))
+            final Collection<FlowDifference> comparisonDifferences = comparison.getDifferences();
+            final FlowDifferenceFilters.EnvironmentalChangeContext environmentalContext =
+                FlowDifferenceFilters.buildEnvironmentalChangeContext(comparisonDifferences, flowManager);
+
+            final Set<FlowDifference> differences = comparisonDifferences.stream()
+                .filter(difference -> !FlowDifferenceFilters.isEnvironmentalChange(difference, versionedGroup, flowManager, environmentalContext))
                 .collect(Collectors.toCollection(HashSet::new));
 
             LOG.debug("There are {} differences between this Local Flow and the Versioned Flow: {}", differences.size(), differences);
@@ -4340,6 +4364,16 @@ public final class StandardProcessGroup implements ProcessGroup {
         return new QueueSize(count, contentSize);
     }
 
+    /**
+     * Get Map of Attribute Names and Values to provide additional context for logging
+     *
+     * @return Map of Attribute Names and Values
+     */
+    @Override
+    public Map<String, String> getLoggingAttributes() {
+        return Collections.unmodifiableMap(loggingAttributes);
+    }
+
     @Override
     public String getLogFileSuffix() {
         return logFileSuffix;
@@ -4354,6 +4388,7 @@ public final class StandardProcessGroup implements ProcessGroup {
         }
     }
 
+    @Override
     public ExecutionEngine getExecutionEngine() {
         return executionEngine;
     }
@@ -4527,6 +4562,80 @@ public final class StandardProcessGroup implements ProcessGroup {
             this.statelessFlowTimeout = statelessFlowTimeout;
         } catch (final Exception e) {
             LOG.warn("Attempted to set Stateless Flow Timeout for {} to invalid value: {}; ignoring this value", this, statelessFlowTimeout);
+        }
+    }
+
+    private void setLoggingAttributes() {
+        loggingAttributes.clear();
+
+        loggingAttributes.put(LoggingAttribute.PROCESS_GROUP_ID.attribute, id);
+
+        final String processGroupName = name.get();
+        if (processGroupName == null) {
+            loggingAttributes.put(LoggingAttribute.PROCESS_GROUP_NAME.attribute, STANDARD_PROCESS_GROUP_NAME);
+        } else {
+            loggingAttributes.put(LoggingAttribute.PROCESS_GROUP_NAME.attribute, processGroupName);
+            setGroupPath();
+        }
+
+        final VersionControlInformation currentVersionControl = versionControlInfo.get();
+        if (currentVersionControl != null) {
+            final String registeredFlowIdentifier = currentVersionControl.getFlowIdentifier();
+            loggingAttributes.put(LoggingAttribute.REGISTERED_FLOW_IDENTIFIER.attribute, registeredFlowIdentifier);
+
+            final String registeredFlowVersion = currentVersionControl.getVersion();
+            loggingAttributes.put(LoggingAttribute.REGISTERED_FLOW_VERSION.attribute, registeredFlowVersion);
+        }
+    }
+
+    private void setGroupPath() {
+        final StringBuilder namePathBuilder = new StringBuilder();
+        namePathBuilder.append(PATH_SEPARATOR);
+        namePathBuilder.append(name.get());
+
+        final StringBuilder idPathBuilder = new StringBuilder();
+        idPathBuilder.append(PATH_SEPARATOR);
+        idPathBuilder.append(id);
+
+        ProcessGroup parentProcessGroup = getParent();
+        while (parentProcessGroup != null) {
+            namePathBuilder.insert(0, PATH_SEPARATOR);
+            namePathBuilder.insert(1, parentProcessGroup.getName());
+
+            idPathBuilder.insert(0, PATH_SEPARATOR);
+            idPathBuilder.insert(1, parentProcessGroup.getIdentifier());
+
+            parentProcessGroup = parentProcessGroup.getParent();
+        }
+
+        final String idPath = idPathBuilder.toString();
+        loggingAttributes.put(LoggingAttribute.PROCESS_GROUP_ID_PATH.attribute, idPath);
+
+        final String namePath = namePathBuilder.toString();
+        loggingAttributes.put(LoggingAttribute.PROCESS_GROUP_NAME_PATH.attribute, namePath);
+    }
+
+    enum LoggingAttribute {
+        PROCESS_GROUP_ID("processGroupId"),
+
+        PROCESS_GROUP_ID_PATH("processGroupIdPath"),
+
+        PROCESS_GROUP_NAME("processGroupName"),
+
+        PROCESS_GROUP_NAME_PATH("processGroupNamePath"),
+
+        REGISTERED_FLOW_IDENTIFIER("registeredFlowIdentifier"),
+
+        REGISTERED_FLOW_VERSION("registeredFlowVersion");
+
+        private final String attribute;
+
+        LoggingAttribute(final String attribute) {
+            this.attribute = attribute;
+        }
+
+        String getAttribute() {
+            return attribute;
         }
     }
 }

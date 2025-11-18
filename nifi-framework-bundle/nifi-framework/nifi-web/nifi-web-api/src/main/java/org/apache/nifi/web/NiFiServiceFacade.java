@@ -23,6 +23,7 @@ import org.apache.nifi.authorization.user.NiFiUser;
 import org.apache.nifi.bundle.BundleCoordinate;
 import org.apache.nifi.c2.protocol.component.api.ControllerServiceDefinition;
 import org.apache.nifi.c2.protocol.component.api.FlowAnalysisRuleDefinition;
+import org.apache.nifi.c2.protocol.component.api.FlowRegistryClientDefinition;
 import org.apache.nifi.c2.protocol.component.api.ParameterProviderDefinition;
 import org.apache.nifi.c2.protocol.component.api.ProcessorDefinition;
 import org.apache.nifi.c2.protocol.component.api.ReportingTaskDefinition;
@@ -100,6 +101,8 @@ import org.apache.nifi.web.api.entity.ActivateControllerServicesEntity;
 import org.apache.nifi.web.api.entity.AffectedComponentEntity;
 import org.apache.nifi.web.api.entity.AssetEntity;
 import org.apache.nifi.web.api.entity.BulletinEntity;
+import org.apache.nifi.web.api.entity.ClearBulletinsResultEntity;
+import org.apache.nifi.web.api.entity.ClearBulletinsForGroupResultsEntity;
 import org.apache.nifi.web.api.entity.ComponentValidationResultEntity;
 import org.apache.nifi.web.api.entity.ConfigurationAnalysisEntity;
 import org.apache.nifi.web.api.entity.ConnectionEntity;
@@ -160,6 +163,7 @@ import org.apache.nifi.web.api.request.FlowMetricsRegistry;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.time.Instant;
 import java.util.Collection;
 import java.util.Date;
 import java.util.List;
@@ -447,6 +451,13 @@ public interface NiFiServiceFacade {
     CounterDTO updateCounter(String counterId);
 
     /**
+     * Updates all counters by setting their values to 0.
+     *
+     * @return The counters
+     */
+    CountersDTO updateAllCounters();
+
+    /**
      * Returns the counters.
      *
      * @return The counters
@@ -494,6 +505,8 @@ public interface NiFiServiceFacade {
      * @return The list of available flow registry client types matching specified criteria
      */
     Set<DocumentedTypeDTO> getFlowRegistryTypes();
+
+    FlowRegistryClientDefinition getFlowRegistryClientDefinition(String group, String artifact, String version, String type);
 
     /**
      * Returns the RuntimeManifest for this NiFi instance.
@@ -755,6 +768,13 @@ public interface NiFiServiceFacade {
      * @return snapshot
      */
     ProcessorEntity deleteProcessor(Revision revision, String processorId);
+
+    /**
+     * Reloads the underlying processor if the additional classpath resources have changed.
+     *
+     * @param processorId the id of the processor to reload
+     */
+    void reloadProcessor(String processorId);
 
     // ----------------------------------------
     // Connections methods
@@ -1279,6 +1299,16 @@ public interface NiFiServiceFacade {
     ProcessGroupEntity updateProcessGroup(Revision revision, ProcessGroupDTO processGroupDTO);
 
     /**
+     * Sets the version control info of an unversioned process group.
+     *
+     * @param revision Revision to compare with the current base version
+     * @param processGroupDTO The ProcessGroupDTO
+     * @param flowSnapshot The flow snapshot matching the given version control info
+     * @return the updated process group entity
+     */
+    ProcessGroupEntity setVersionControlInformation(Revision revision, ProcessGroupDTO processGroupDTO, RegisteredFlowSnapshot flowSnapshot);
+
+    /**
      * Verifies that the Process Group identified by the given DTO can be updated in the manner appropriate according
      * to the DTO
      *
@@ -1754,6 +1784,12 @@ public interface NiFiServiceFacade {
     void verifyCanVerifyParameterProviderConfig(String parameterProviderId);
 
     /**
+     * Verifies that the Flow Registry Client with the given identifier is in a state where its configuration can be verified
+     * @param registryClientId the ID of the registry client
+     */
+    void verifyCanVerifyFlowRegistryClientConfig(String registryClientId);
+
+    /**
      * Verifies that the Process Group with the given identifier can be saved to the flow registry
      *
      * @param groupId the ID of the Process Group
@@ -1855,9 +1891,11 @@ public interface NiFiServiceFacade {
     /**
      * Clears the state for the specified processor.
      *
-     * @param processorId the processor id
+     * @param processorId       processor id
+     * @param componentStateDTO state of the processor
+     * @return the cleared component state
      */
-    void clearProcessorState(String processorId);
+    ComponentStateDTO clearProcessorState(final String processorId, final ComponentStateDTO componentStateDTO);
 
     /**
      * Gets the state for the specified controller service.
@@ -1878,8 +1916,10 @@ public interface NiFiServiceFacade {
      * Clears the state for the specified controller service.
      *
      * @param controllerServiceId the controller service id
+     * @param componentStateDTO   state of the controller service
+     * @return the cleared component state
      */
-    void clearControllerServiceState(String controllerServiceId);
+    ComponentStateDTO clearControllerServiceState(String controllerServiceId, final ComponentStateDTO componentStateDTO);
 
     /**
      * Gets the state for the specified reporting task.
@@ -1899,9 +1939,11 @@ public interface NiFiServiceFacade {
     /**
      * Clears the state for the specified reporting task.
      *
-     * @param reportingTaskId the reporting task id
+     * @param reportingTaskId   the reporting task id
+     * @param componentStateDTO the component state of the reporting task
+     * @return the cleared component state
      */
-    void clearReportingTaskState(String reportingTaskId);
+    ComponentStateDTO clearReportingTaskState(String reportingTaskId, final ComponentStateDTO componentStateDTO);
 
     /**
      * Gets the state for the specified parameter provider.
@@ -1922,8 +1964,10 @@ public interface NiFiServiceFacade {
      * Clears the state for the specified parameter provider.
      *
      * @param parameterProviderId the parameter provider id
+     * @param componentStateDTO   the component state of the parameter provider
+     * @return the cleared component state
      */
-    void clearParameterProviderState(String parameterProviderId);
+    ComponentStateDTO clearParameterProviderState(String parameterProviderId, final ComponentStateDTO componentStateDTO);
 
     /**
      * Gets the state for the specified RemoteProcessGroup.
@@ -2244,6 +2288,13 @@ public interface NiFiServiceFacade {
      */
     void verifyDeleteControllerService(String controllerServiceId);
 
+    /**
+     * Reloads the underlying controller service if the additional classpath resources have changed.
+     *
+     * @param controllerServiceId the id of the controller service to reload
+     */
+    void reloadControllerService(String controllerServiceId);
+
     // ----------------------------------------
     // Parameter Provider methods
     // ----------------------------------------
@@ -2539,6 +2590,10 @@ public interface NiFiServiceFacade {
      */
     Set<FlowRegistryBucketEntity> getBucketsForUser(String registryClientId, String branch);
 
+    List<ConfigVerificationResultDTO> performFlowRegistryClientConfigVerification(String registryClientId, Map<String, String> properties, Map<String, String> variables);
+
+    ConfigurationAnalysisEntity analyzeFlowRegistryClientConfiguration(String registryClientId, Map<String, String> properties);
+
     /**
      * Gets the flows for the current user for the specified registry and bucket.
      *
@@ -2766,6 +2821,14 @@ public interface NiFiServiceFacade {
     void discoverCompatibleBundles(VersionedProcessGroup versionedGroup);
 
     /**
+     * Discovers the compatible bundle details for the components in the specified Parameter Providers and updates them
+     * to reflect the appropriate bundles.
+     *
+     * @param parameterProviders the parameter provider map
+     */
+    void discoverCompatibleBundles(Map<String, ParameterProviderReference> parameterProviders);
+
+    /**
      * Discovers the compatible bundle details for the components in the specified snapshot and updates the snapshot to reflect the appropriate bundles.
      *
      * @param reportingTaskSnapshot the snapshot
@@ -2912,8 +2975,10 @@ public interface NiFiServiceFacade {
      * Clears the state for the flow analysis rule with the specified id.
      *
      * @param flowAnalysisRuleId the flow analysis rule id
+     * @param componentStateDTO  the state of the flow analysis rule
+     * @return the cleared component state
      */
-    void clearFlowAnalysisRuleState(String flowAnalysisRuleId);
+    ComponentStateDTO clearFlowAnalysisRuleState(String flowAnalysisRuleId, final ComponentStateDTO componentStateDTO);
 
     /**
      * Updates the specified flow analysis rule.
@@ -3027,5 +3092,38 @@ public interface NiFiServiceFacade {
      * @param assetId the asset id
      */
     AssetEntity deleteAsset(String parameterContextId, String assetId);
+
+    // -----------------------------------------
+    // Bulletin methods
+    // -----------------------------------------
+
+    /**
+     * Clears bulletins for the specified component.
+     *
+     * @param componentId the component id
+     * @param fromTimestamp the timestamp from which to clear bulletins (inclusive), must not be null
+     * @return the clear bulletin result entity
+     */
+    ClearBulletinsResultEntity clearBulletinsForComponent(String componentId, Instant fromTimestamp);
+
+
+    /**
+     * Clears bulletins for the specified components.
+     *
+     * @param processGroupId the process group id
+     * @param fromTimestamp the timestamp from which to clear bulletins (inclusive), must not be null
+     * @param componentIds the component IDs for which to clear bulletins
+     * @return the results of clearing bulletins for each component
+     */
+    ClearBulletinsForGroupResultsEntity clearBulletinsForComponents(String processGroupId, Instant fromTimestamp, Set<String> componentIds);
+
+    /**
+     * Filters components within the specified process group using the provided function.
+     *
+     * @param groupId the id of the process group
+     * @param getComponents function that takes a ProcessGroup and returns a set of component IDs
+     * @return set of component IDs returned by the function
+     */
+    Set<String> filterComponents(String groupId, Function<ProcessGroup, Set<String>> getComponents);
 
 }

@@ -2,13 +2,13 @@
     "name": "nifi",
     "$schema": "../../node_modules/nx/schemas/project-schema.json",
     "projectType": "application",
+    "sourceRoot": "apps/nifi/src",
+    "prefix": "app",
     "generators": {
         "@schematics/angular:component": {
             "style": "scss"
         }
     },
-    "sourceRoot": "apps/nifi/src",
-    "prefix": "app",
     "targets": {
         "build": {
             "executor": "@nx/angular:application",
@@ -46,7 +46,6 @@
                     "node_modules/prismjs/plugins/line-numbers/prism-line-numbers.js",
                     "node_modules/clipboard/dist/clipboard.min.js"
                 ],
-                "allowedCommonJsDependencies": ["codemirror"],
                 "preserveSymlinks": true
             },
             "configurations": {
@@ -100,7 +99,8 @@
                     "servePath": "/nifi"
                 }
             },
-            "defaultConfiguration": "development"
+            "defaultConfiguration": "development",
+            "continuous": true
         },
         "extract-i18n": {
             "executor": "@angular-devkit/build-angular:extract-i18n",

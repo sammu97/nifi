@@ -2,13 +2,13 @@
     "name": "nifi-jolt-transform-ui",
     "$schema": "../../node_modules/nx/schemas/project-schema.json",
     "projectType": "application",
+    "sourceRoot": "apps/nifi-jolt-transform-ui/src",
+    "prefix": "app",
     "generators": {
         "@schematics/angular:component": {
             "style": "scss"
         }
     },
-    "sourceRoot": "apps/nifi-jolt-transform-ui/src",
-    "prefix": "app",
     "targets": {
         "build": {
             "executor": "@nx/angular:application",
@@ -32,7 +32,7 @@
                     "includePaths": [""]
                 },
                 "scripts": [],
-                "allowedCommonJsDependencies": ["codemirror", "jsonlint", "js-beautify"],
+                "allowedCommonJsDependencies": ["js-beautify"],
                 "preserveSymlinks": true
             },
             "configurations": {
@@ -89,10 +89,11 @@
                 },
                 "development": {
                     "buildTarget": "nifi-jolt-transform-ui:build:development",
-                    "servePath": "/nifi-jolt-transform-json-ui-2.1.0-SNAPSHOT/"
+                    "servePath": "/nifi-jolt-transform-json-ui-2.7.0-SNAPSHOT/"
                 }
             },
-            "defaultConfiguration": "development"
+            "defaultConfiguration": "development",
+            "continuous": true
         },
         "test": {
             "executor": "@nx/jest:jest",

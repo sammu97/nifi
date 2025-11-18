@@ -53,6 +53,7 @@ import org.apache.nifi.groups.ProcessGroup;
 import org.apache.nifi.groups.RemoteProcessGroup;
 import org.apache.nifi.processor.Relationship;
 import org.apache.nifi.provenance.ProvenanceEventRecord;
+import org.apache.nifi.registry.flow.RegisteredFlowSnapshotMetadata;
 import org.apache.nifi.registry.flow.VersionControlInformation;
 import org.apache.nifi.registry.flow.VersionedFlowState;
 import org.apache.nifi.registry.flow.VersionedFlowStatus;
@@ -540,6 +541,15 @@ public abstract class AbstractEventAccess implements EventAccess {
 
         final VersionControlInformation vci = group.getVersionControlInformation();
         if (vci != null) {
+            final RegisteredFlowSnapshotMetadata registeredFlowSnapshotMetadata = new RegisteredFlowSnapshotMetadata();
+            registeredFlowSnapshotMetadata.setBranch(vci.getBranch());
+            registeredFlowSnapshotMetadata.setBucketIdentifier(vci.getBucketIdentifier());
+            registeredFlowSnapshotMetadata.setFlowIdentifier(vci.getFlowIdentifier());
+            registeredFlowSnapshotMetadata.setVersion(vci.getVersion());
+            registeredFlowSnapshotMetadata.setFlowName(vci.getFlowName());
+            registeredFlowSnapshotMetadata.setRegistryIdentifier(vci.getRegistryIdentifier());
+            registeredFlowSnapshotMetadata.setRegistryName(vci.getRegistryName());
+            status.setRegisteredFlowSnapshotMetadata(registeredFlowSnapshotMetadata);
             try {
                 final VersionedFlowStatus flowStatus = vci.getStatus();
                 if (flowStatus != null && flowStatus.getState() != null) {
@@ -685,31 +695,46 @@ public abstract class AbstractEventAccess implements EventAccess {
                 status.setCounters(flowFileEvent.getCounters());
             }
 
-            final ProcessingPerformanceStatus performanceStatus = PerformanceMetricsUtil.getPerformanceMetrics(flowFileEvent, procNode);
-            status.setProcessingPerformanceStatus(performanceStatus);
+            final ProcessingPerformanceStatus perfStatus = createProcessingPerformanceStatus(flowFileEvent, procNode);
+            status.setProcessingPerformanceStatus(perfStatus);
         }
 
         // Determine the run status and get any validation error... only validating while STOPPED
         // is a trade-off we are willing to make, even though processor validity could change due to
         // environmental conditions (property configured with a file path and the file being externally
         // removed). This saves on validation costs that would be unnecessary most of the time.
-        if (ScheduledState.DISABLED.equals(procNode.getScheduledState())) {
-            status.setRunStatus(RunStatus.Disabled);
-        } else if (ScheduledState.RUNNING.equals(procNode.getScheduledState())) {
-            status.setRunStatus(RunStatus.Running);
-        } else if (procNode.getValidationStatus() == ValidationStatus.VALIDATING) {
-            status.setRunStatus(RunStatus.Validating);
-        } else if (procNode.getValidationStatus() == ValidationStatus.INVALID && procNode.getActiveThreadCount() == 0) {
-            status.setRunStatus(RunStatus.Invalid);
-        } else {
-            status.setRunStatus(RunStatus.Stopped);
-        }
+        status.setRunStatus(determineRunStatus(procNode));
 
         status.setExecutionNode(procNode.getExecutionNode());
         status.setTerminatedThreadCount(procNode.getTerminatedThreadCount());
         status.setActiveThreadCount(procNode.getActiveThreadCount());
 
         return status;
+    }
+
+    private ProcessingPerformanceStatus createProcessingPerformanceStatus(final FlowFileEvent flowFileEvent, final ProcessorNode procNode) {
+        final ProcessingPerformanceStatus perfStatus = new ProcessingPerformanceStatus();
+        perfStatus.setIdentifier(procNode.getIdentifier());
+        perfStatus.setCpuDuration(flowFileEvent.getCpuNanoseconds());
+        perfStatus.setContentReadDuration(flowFileEvent.getContentReadNanoseconds());
+        perfStatus.setContentWriteDuration(flowFileEvent.getContentWriteNanoseconds());
+        perfStatus.setSessionCommitDuration(flowFileEvent.getSessionCommitNanoseconds());
+        perfStatus.setGarbageCollectionDuration(flowFileEvent.getGargeCollectionMillis());
+        return perfStatus;
+    }
+
+    private RunStatus determineRunStatus(final ProcessorNode procNode) {
+        if (ScheduledState.DISABLED.equals(procNode.getScheduledState())) {
+            return RunStatus.Disabled;
+        } else if (ScheduledState.RUNNING.equals(procNode.getScheduledState())) {
+            return RunStatus.Running;
+        } else if (procNode.getValidationStatus() == ValidationStatus.VALIDATING) {
+            return RunStatus.Validating;
+        } else if (procNode.getValidationStatus() == ValidationStatus.INVALID && procNode.getActiveThreadCount() == 0) {
+            return RunStatus.Invalid;
+        }
+
+        return RunStatus.Stopped;
     }
 
     /**

@@ -22,10 +22,17 @@ import { ImportFromRegistryDialogRequest } from '../../../../../state/flow';
 import { MAT_DIALOG_DATA, MatDialogRef } from '@angular/material/dialog';
 import { ComponentType } from '@nifi/shared';
 import { provideMockStore } from '@ngrx/store/testing';
-import { initialState } from '../../../../../state/flow/flow.reducer';
+import { initialState as initialFlowState } from '../../../../../state/flow/flow.reducer';
+import { flowFeatureKey } from '../../../../../state/flow';
+import { canvasFeatureKey } from '../../../../../state';
+import { initialState as initialErrorState } from '../../../../../../../state/error/error.reducer';
+import { errorFeatureKey } from '../../../../../../../state/error';
+import { initialState as initialCurrentUserState } from '../../../../../../../state/current-user/current-user.reducer';
+import { currentUserFeatureKey } from '../../../../../../../state/current-user';
 import { NoopAnimationsModule } from '@angular/platform-browser/animations';
 import { EMPTY } from 'rxjs';
 import { ClusterConnectionService } from '../../../../../../../service/cluster-connection.service';
+import { By } from '@angular/platform-browser';
 
 describe('ImportFromRegistry', () => {
     let component: ImportFromRegistry;
@@ -115,7 +122,15 @@ describe('ImportFromRegistry', () => {
             imports: [ImportFromRegistry, NoopAnimationsModule],
             providers: [
                 { provide: MAT_DIALOG_DATA, useValue: data },
-                provideMockStore({ initialState }),
+                provideMockStore({
+                    initialState: {
+                        [errorFeatureKey]: initialErrorState,
+                        [currentUserFeatureKey]: initialCurrentUserState,
+                        [canvasFeatureKey]: {
+                            [flowFeatureKey]: initialFlowState
+                        }
+                    }
+                }),
                 {
                     provide: ClusterConnectionService,
                     useValue: {
@@ -143,5 +158,37 @@ describe('ImportFromRegistry', () => {
 
     it('should create', () => {
         expect(component).toBeTruthy();
+    });
+
+    it('should show the skeleton loader for versions', () => {
+        component.loadingVersions.set(true);
+        fixture.detectChanges();
+        const skeleton = fixture.debugElement.query(By.css('div[data-qa="skeleton-loader-versions"]'));
+        const error = fixture.debugElement.query(By.css('div[data-qa="loading-versions-error"]'));
+        expect(skeleton).toBeTruthy();
+        expect(error).toBeFalsy();
+    });
+
+    it('should show the loading error panel if there is an error', () => {
+        component.loadingVersions.set(false);
+        component.loadingVersionsError.set('some error happened');
+        fixture.detectChanges();
+        const skeleton = fixture.debugElement.query(By.css('div[data-qa="skeleton-loader-versions"]'));
+        const error = fixture.debugElement.query(By.css('div[data-qa="loading-versions-error"]'));
+        const versions = fixture.debugElement.query(By.css('div[data-qa="versions-listing-table"]'));
+        expect(skeleton).toBeFalsy();
+        expect(error).toBeTruthy();
+        expect(versions).toBeFalsy();
+    });
+
+    it('should show the versions', () => {
+        component.loadingVersions.set(false);
+        fixture.detectChanges();
+        const skeleton = fixture.debugElement.query(By.css('div[data-qa="skeleton-loader-versions"]'));
+        const error = fixture.debugElement.query(By.css('div[data-qa="loading-versions-error"]'));
+        const versions = fixture.debugElement.query(By.css('div[data-qa="versions-listing-table"]'));
+        expect(skeleton).toBeFalsy();
+        expect(error).toBeFalsy();
+        expect(versions).toBeTruthy();
     });
 });

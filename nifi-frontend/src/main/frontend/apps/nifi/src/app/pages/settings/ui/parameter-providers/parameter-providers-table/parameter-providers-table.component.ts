@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-import { Component, EventEmitter, Input, Output } from '@angular/core';
+import { Component, EventEmitter, Input, Output, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { MatSortModule, Sort, SortDirection } from '@angular/material/sort';
 import { MatTableDataSource, MatTableModule } from '@angular/material/table';
@@ -25,9 +25,10 @@ import { CurrentUser } from '../../../../../state/current-user';
 import { FlowConfiguration } from '../../../../../state/flow-configuration';
 import { MatPaginatorModule } from '@angular/material/paginator';
 import { ValidationErrorsTip } from '../../../../../ui/common/tooltips/validation-errors-tip/validation-errors-tip.component';
-import { ValidationErrorsTipInput } from '../../../../../state/shared';
+import { BulletinsTipInput, ValidationErrorsTipInput } from '../../../../../state/shared';
 import { MatIconButton } from '@angular/material/button';
 import { MatMenu, MatMenuItem, MatMenuTrigger } from '@angular/material/menu';
+import { BulletinsTip } from '../../../../../ui/common/tooltips/bulletins-tip/bulletins-tip.component';
 
 export type SupportedColumns = 'name' | 'type' | 'bundle';
 
@@ -48,6 +49,8 @@ export type SupportedColumns = 'name' | 'type' | 'bundle';
     styleUrls: ['./parameter-providers-table.component.scss']
 })
 export class ParameterProvidersTable {
+    private nifiCommon = inject(NiFiCommon);
+
     @Input() initialSortColumn: SupportedColumns = 'name';
     @Input() initialSortDirection: SortDirection = 'asc';
 
@@ -57,8 +60,6 @@ export class ParameterProvidersTable {
         active: this.initialSortColumn,
         direction: this.initialSortDirection
     };
-
-    constructor(private nifiCommon: NiFiCommon) {}
 
     @Input() selectedParameterProviderId!: string;
     @Input() currentUser!: CurrentUser;
@@ -82,6 +83,8 @@ export class ParameterProvidersTable {
     @Output() fetchParameterProvider: EventEmitter<ParameterProviderEntity> =
         new EventEmitter<ParameterProviderEntity>();
     @Output() manageAccessPolicies: EventEmitter<ParameterProviderEntity> = new EventEmitter<ParameterProviderEntity>();
+    @Output() clearBulletinsParameterProvider: EventEmitter<ParameterProviderEntity> =
+        new EventEmitter<ParameterProviderEntity>();
 
     protected readonly ValidationErrorsTip = ValidationErrorsTip;
 
@@ -130,6 +133,17 @@ export class ParameterProvidersTable {
             return parameterProvider.id === this.selectedParameterProviderId;
         }
         return false;
+    }
+
+    hasBulletins(entity: ParameterProviderEntity): boolean {
+        return this.canRead(entity) && !this.nifiCommon.isEmpty(entity.bulletins);
+    }
+
+    getBulletinsTipData(entity: ParameterProviderEntity): BulletinsTipInput {
+        return {
+            // @ts-ignore
+            bulletins: entity.bulletins
+        };
     }
 
     viewDocumentationClicked(entity: ParameterProviderEntity): void {
@@ -208,4 +222,14 @@ export class ParameterProvidersTable {
     manageAccessPoliciesClicked(entity: ParameterProviderEntity) {
         this.manageAccessPolicies.next(entity);
     }
+
+    canClearBulletins(entity: ParameterProviderEntity): boolean {
+        return this.canWrite(entity) && !this.nifiCommon.isEmpty(entity.bulletins);
+    }
+
+    clearBulletinsClicked(entity: ParameterProviderEntity) {
+        this.clearBulletinsParameterProvider.next(entity);
+    }
+
+    protected readonly BulletinsTip = BulletinsTip;
 }

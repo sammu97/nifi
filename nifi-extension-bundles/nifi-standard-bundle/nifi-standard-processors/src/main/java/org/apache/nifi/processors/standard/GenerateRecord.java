@@ -34,6 +34,7 @@ import org.apache.nifi.components.PropertyDescriptor;
 import org.apache.nifi.expression.ExpressionLanguageScope;
 import org.apache.nifi.flowfile.FlowFile;
 import org.apache.nifi.flowfile.attributes.CoreAttributes;
+import org.apache.nifi.migration.PropertyConfiguration;
 import org.apache.nifi.processor.AbstractProcessor;
 import org.apache.nifi.processor.ProcessContext;
 import org.apache.nifi.processor.ProcessSession;
@@ -104,16 +105,14 @@ public class GenerateRecord extends AbstractProcessor {
     private static final String KEY4 = "key4";
 
     static final PropertyDescriptor RECORD_WRITER = new PropertyDescriptor.Builder()
-            .name("record-writer")
-            .displayName("Record Writer")
+            .name("Record Writer")
             .description("Specifies the Controller Service to use for writing out the records")
             .identifiesControllerService(RecordSetWriterFactory.class)
             .required(true)
             .build();
 
     static final PropertyDescriptor NUM_RECORDS = new PropertyDescriptor.Builder()
-            .name("number-of-records")
-            .displayName("Number of Records")
+            .name("Number of Records")
             .description("Specifies how many records will be generated for each outgoing FlowFile.")
             .required(true)
             .expressionLanguageSupported(ExpressionLanguageScope.ENVIRONMENT)
@@ -122,8 +121,7 @@ public class GenerateRecord extends AbstractProcessor {
             .build();
 
     static final PropertyDescriptor NULLABLE_FIELDS = new PropertyDescriptor.Builder()
-            .name("nullable-fields")
-            .displayName("Nullable Fields")
+            .name("Nullable Fields")
             .description("Whether the generated fields will be nullable. Note that this property is ignored if Schema Text is set. Also it only affects the schema of the generated data, " +
                     "not whether any values will be null. If this property is true, see 'Null Value Percentage' to set the probability that any generated field will be null.")
             .allowableValues("true", "false")
@@ -131,8 +129,7 @@ public class GenerateRecord extends AbstractProcessor {
             .required(true)
             .build();
     static final PropertyDescriptor NULL_PERCENTAGE = new PropertyDescriptor.Builder()
-            .name("null-percentage")
-            .displayName("Null Value Percentage")
+            .name("Null Value Percentage")
             .description("The percent probability (0-100%) that a generated value for any nullable field will be null. Set this property to zero to have no null values, or 100 to have all " +
                     "null values.")
             .addValidator(StandardValidators.createLongValidator(0L, 100L, true))
@@ -143,8 +140,7 @@ public class GenerateRecord extends AbstractProcessor {
             .build();
 
     static final PropertyDescriptor SCHEMA_TEXT = new PropertyDescriptor.Builder()
-            .name("schema-text")
-            .displayName("Schema Text")
+            .name("Schema Text")
             .description("The text of an Avro-formatted Schema used to generate record data. If this property is set, any user-defined properties are ignored.")
             .addValidator(new AvroSchemaValidator())
             .expressionLanguageSupported(ExpressionLanguageScope.ENVIRONMENT)
@@ -284,6 +280,15 @@ public class GenerateRecord extends AbstractProcessor {
         getLogger().info("Generated records [{}] for {}", count, flowFile);
     }
 
+    @Override
+    public void migrateProperties(PropertyConfiguration config) {
+        config.renameProperty("record-writer", RECORD_WRITER.getName());
+        config.renameProperty("number-of-records", NUM_RECORDS.getName());
+        config.renameProperty("nullable-fields", NULLABLE_FIELDS.getName());
+        config.renameProperty("null-percentage", NULL_PERCENTAGE.getName());
+        config.renameProperty("schema-text", SCHEMA_TEXT.getName());
+    }
+
     protected Map<String, String> getFields(ProcessContext context) {
         return context.getProperties().entrySet().stream()
                 // filter non-null dynamic properties
@@ -299,42 +304,33 @@ public class GenerateRecord extends AbstractProcessor {
         if (recordField.isNullable() && faker.number().numberBetween(0, 100) < nullPercentage) {
             return null;
         }
-        switch (recordField.getDataType().getFieldType()) {
-            case BIGINT:
-                return new BigInteger(String.valueOf(faker.number().numberBetween(Long.MIN_VALUE, Long.MAX_VALUE)));
-            case BOOLEAN:
-                return FakerUtils.getFakeData("Bool.bool", faker);
-            case BYTE:
-                return (byte) faker.number().numberBetween(Byte.MIN_VALUE, Byte.MAX_VALUE);
-            case CHAR:
-                return (char) faker.number().numberBetween(Character.MIN_VALUE, Character.MAX_VALUE);
-            case DATE:
-                return FakerUtils.getFakeData(DEFAULT_DATE_PROPERTY_NAME, faker);
-            case DOUBLE:
-                return faker.number().randomDouble(6, Long.MIN_VALUE, Long.MAX_VALUE);
-            case FLOAT:
+        return switch (recordField.getDataType().getFieldType()) {
+            case BIGINT -> new BigInteger(String.valueOf(faker.number().numberBetween(Long.MIN_VALUE, Long.MAX_VALUE)));
+            case BOOLEAN -> FakerUtils.getFakeData("Bool.bool", faker);
+            case BYTE -> (byte) faker.number().numberBetween(Byte.MIN_VALUE, Byte.MAX_VALUE);
+            case CHAR -> (char) faker.number().numberBetween(Character.MIN_VALUE, Character.MAX_VALUE);
+            case DATE -> FakerUtils.getFakeData(DEFAULT_DATE_PROPERTY_NAME, faker);
+            case DOUBLE -> faker.number().randomDouble(6, Long.MIN_VALUE, Long.MAX_VALUE);
+            case FLOAT -> {
                 final double randomDouble = faker.number().randomDouble(6, Long.MIN_VALUE, Long.MAX_VALUE);
-                return (float) randomDouble;
-            case DECIMAL:
-                return faker.number().randomDouble(((DecimalDataType) recordField.getDataType()).getScale(), Long.MIN_VALUE, Long.MAX_VALUE);
-            case INT:
-                return faker.number().numberBetween(Integer.MIN_VALUE, Integer.MAX_VALUE);
-            case LONG:
-                return faker.number().numberBetween(Long.MIN_VALUE, Long.MAX_VALUE);
-            case SHORT:
-                return faker.number().numberBetween(Short.MIN_VALUE, Short.MAX_VALUE);
-            case ENUM:
+                yield (float) randomDouble;
+            }
+            case DECIMAL -> faker.number().randomDouble(((DecimalDataType) recordField.getDataType()).getScale(), Long.MIN_VALUE, Long.MAX_VALUE);
+            case INT -> faker.number().numberBetween(Integer.MIN_VALUE, Integer.MAX_VALUE);
+            case LONG -> faker.number().numberBetween(Long.MIN_VALUE, Long.MAX_VALUE);
+            case SHORT -> faker.number().numberBetween(Short.MIN_VALUE, Short.MAX_VALUE);
+            case ENUM -> {
                 List<String> enums = ((EnumDataType) recordField.getDataType()).getEnums();
-                return enums.get(faker.number().numberBetween(0, enums.size() - 1));
-            case TIME:
+                yield enums.get(faker.number().numberBetween(0, enums.size() - 1));
+            }
+            case TIME -> {
                 Date fakeDate = (Date) FakerUtils.getFakeData(DEFAULT_DATE_PROPERTY_NAME, faker);
                 LocalDate fakeLocalDate = fakeDate.toInstant().atZone(ZoneId.systemDefault()).toLocalDate();
-                return fakeLocalDate.format(DateTimeFormatter.ISO_LOCAL_TIME);
-            case TIMESTAMP:
-                return ((Date) FakerUtils.getFakeData(DEFAULT_DATE_PROPERTY_NAME, faker)).getTime();
-            case UUID:
-                return UUID.randomUUID();
-            case ARRAY:
+                yield fakeLocalDate.format(DateTimeFormatter.ISO_LOCAL_TIME);
+            }
+            case TIMESTAMP -> ((Date) FakerUtils.getFakeData(DEFAULT_DATE_PROPERTY_NAME, faker)).getTime();
+            case UUID -> UUID.randomUUID();
+            case ARRAY -> {
                 final ArrayDataType arrayDataType = (ArrayDataType) recordField.getDataType();
                 final DataType elementType = arrayDataType.getElementType();
                 final int numElements = faker.number().numberBetween(0, 10);
@@ -344,8 +340,9 @@ public class GenerateRecord extends AbstractProcessor {
                     // If the array elements are non-nullable, use zero as the nullPercentage
                     returnValue[i] = generateValueFromRecordField(tempRecordField, faker, arrayDataType.isElementsNullable() ? nullPercentage : 0);
                 }
-                return returnValue;
-            case MAP:
+                yield returnValue;
+            }
+            case MAP -> {
                 final MapDataType mapDataType = (MapDataType) recordField.getDataType();
                 final DataType valueType = mapDataType.getValueType();
                 // Create 4-element fake map
@@ -354,8 +351,9 @@ public class GenerateRecord extends AbstractProcessor {
                 returnMap.put(KEY2, generateValueFromRecordField(new RecordField(KEY2, valueType), faker, nullPercentage));
                 returnMap.put(KEY3, generateValueFromRecordField(new RecordField(KEY3, valueType), faker, nullPercentage));
                 returnMap.put(KEY4, generateValueFromRecordField(new RecordField(KEY4, valueType), faker, nullPercentage));
-                return returnMap;
-            case RECORD:
+                yield returnMap;
+            }
+            case RECORD -> {
                 final RecordDataType recordType = (RecordDataType) recordField.getDataType();
                 final RecordSchema childSchema = recordType.getChildSchema();
                 final Map<String, Object> recordValues = new HashMap<>();
@@ -364,18 +362,18 @@ public class GenerateRecord extends AbstractProcessor {
                     final Object writeFieldValue = generateValueFromRecordField(writeRecordField, faker, nullPercentage);
                     recordValues.put(writeFieldName, writeFieldValue);
                 }
-                return new MapRecord(childSchema, recordValues);
-            case CHOICE:
+                yield new MapRecord(childSchema, recordValues);
+            }
+            case CHOICE -> {
                 final ChoiceDataType choiceDataType = (ChoiceDataType) recordField.getDataType();
                 List<DataType> subTypes = choiceDataType.getPossibleSubTypes();
                 // Pick one at random and generate a value for it
                 DataType chosenType = subTypes.get(faker.number().numberBetween(0, subTypes.size() - 1));
                 RecordField tempRecordField = new RecordField(recordField.getFieldName(), chosenType);
-                return generateValueFromRecordField(tempRecordField, faker, nullPercentage);
-            case STRING:
-            default:
-                return generateRandomString();
-        }
+                yield generateValueFromRecordField(tempRecordField, faker, nullPercentage);
+            }
+            case STRING -> generateRandomString();
+        };
     }
 
     private String generateRandomString() {

@@ -46,6 +46,9 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import static org.apache.nifi.processors.aws.region.RegionUtil.CUSTOM_REGION;
+import static org.apache.nifi.processors.aws.region.RegionUtil.REGION;
+
 @SupportsBatching
 @SeeAlso({GetDynamoDB.class, PutDynamoDB.class, PutDynamoDBRecord.class})
 @InputRequirement(Requirement.INPUT_REQUIRED)
@@ -73,6 +76,7 @@ public class DeleteDynamoDB extends AbstractDynamoDBProcessor {
     private static final List<PropertyDescriptor> PROPERTY_DESCRIPTORS = List.of(
         TABLE,
         REGION,
+        CUSTOM_REGION,
         AWS_CREDENTIALS_PROVIDER_SERVICE,
         HASH_KEY_NAME,
         RANGE_KEY_NAME,
@@ -94,7 +98,7 @@ public class DeleteDynamoDB extends AbstractDynamoDBProcessor {
     @Override
     public void onTrigger(final ProcessContext context, final ProcessSession session) {
         final List<FlowFile> flowFiles = session.get(context.getProperty(BATCH_SIZE).evaluateAttributeExpressions().asInteger());
-        if (flowFiles == null || flowFiles.size() == 0) {
+        if (flowFiles == null || flowFiles.isEmpty()) {
             return;
         }
 

@@ -27,10 +27,14 @@ org.apache.nifi.processors.tests.system.EnsureProcessorConfigurationCorrect
 org.apache.nifi.processors.tests.system.EvaluatePropertiesWithDifferentELScopes
 org.apache.nifi.processors.tests.system.FakeProcessor
 org.apache.nifi.processors.tests.system.FakeDynamicPropertiesProcessor
+org.apache.nifi.processors.tests.system.GenerateAndCountCallbacks
 org.apache.nifi.processors.tests.system.GenerateFlowFile
+org.apache.nifi.processors.tests.system.HoldInput
 org.apache.nifi.processors.tests.system.IngestFile
 org.apache.nifi.processors.tests.system.LoopFlowFile
 org.apache.nifi.processors.tests.system.MigrateProperties
+org.apache.nifi.processors.tests.system.MultiKeyState
+org.apache.nifi.processors.tests.system.MultiKeyStateNotDroppable
 org.apache.nifi.processors.tests.system.PartitionText
 org.apache.nifi.processors.tests.system.PassThrough
 org.apache.nifi.processors.tests.system.PassThroughRequiresInstanceClassLoading
@@ -41,6 +45,7 @@ org.apache.nifi.processors.tests.system.ReverseContents
 org.apache.nifi.processors.tests.system.RoundRobinFlowFiles
 org.apache.nifi.processors.tests.system.SensitiveDynamicPropertiesProcessor
 org.apache.nifi.processors.tests.system.SetAttribute
+org.apache.nifi.processors.tests.system.SetState
 org.apache.nifi.processors.tests.system.Sleep
 org.apache.nifi.processors.tests.system.SplitByLine
 org.apache.nifi.processors.tests.system.SplitTextByLine
@@ -56,3 +61,4 @@ org.apache.nifi.processors.tests.system.VerifyEvenThenOdd
 org.apache.nifi.processors.tests.system.WriteFlowFileCountToFile
 org.apache.nifi.processors.tests.system.WriteLifecycleEvents
 org.apache.nifi.processors.tests.system.WriteToFile
+org.apache.nifi.processors.tests.system.YieldSource

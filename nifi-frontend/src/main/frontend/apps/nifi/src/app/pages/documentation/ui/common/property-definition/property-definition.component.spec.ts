@@ -20,7 +20,11 @@ import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { PropertyDefinitionComponent } from './property-definition.component';
 import { provideMockStore } from '@ngrx/store/testing';
 import { extensionTypesFeatureKey } from '../../../../../state/extension-types';
-import { initialState } from '../../../../../state/extension-types/extension-types.reducer';
+import { initialExtensionsTypesState } from '../../../../../state/extension-types/extension-types.reducer';
+import { initialState as initialErrorState } from '../../../../../state/error/error.reducer';
+import { errorFeatureKey } from '../../../../../state/error';
+import { initialState as initialCurrentUserState } from '../../../../../state/current-user/current-user.reducer';
+import { currentUserFeatureKey } from '../../../../../state/current-user';
 
 describe('PropertyDefinitionComponent', () => {
     let component: PropertyDefinitionComponent;
@@ -32,7 +36,9 @@ describe('PropertyDefinitionComponent', () => {
             providers: [
                 provideMockStore({
                     initialState: {
-                        [extensionTypesFeatureKey]: initialState
+                        [errorFeatureKey]: initialErrorState,
+                        [currentUserFeatureKey]: initialCurrentUserState,
+                        [extensionTypesFeatureKey]: initialExtensionsTypesState
                     }
                 })
             ]

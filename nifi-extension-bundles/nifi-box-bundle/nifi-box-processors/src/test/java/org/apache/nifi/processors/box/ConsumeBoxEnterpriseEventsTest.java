@@ -54,6 +54,7 @@ class ConsumeBoxEnterpriseEventsTest extends AbstractBoxFileTest {
 
     private TestConsumeBoxEnterpriseEvents processor;
 
+    @Override
     @BeforeEach
     void setUp() throws Exception {
         processor = new TestConsumeBoxEnterpriseEvents();
@@ -92,6 +93,8 @@ class ConsumeBoxEnterpriseEventsTest extends AbstractBoxFileTest {
                 .toList();
 
         assertEquals(expectedEventIds, eventIds);
+
+        assertEquals(eventIds.size(), testRunner.getCounterValue(ConsumeBoxEnterpriseEvents.COUNTER_RECORDS_PROCESSED));
     }
 
     static List<Arguments> dataFor_testConsumeEvents() {
@@ -129,6 +132,7 @@ class ConsumeBoxEnterpriseEventsTest extends AbstractBoxFileTest {
             assertDoesNotThrow(() -> runFuture.get(5, TimeUnit.SECONDS), "Processor did not stop gracefully");
 
             testRunner.assertAllFlowFilesTransferred(ConsumeBoxEnterpriseEvents.REL_SUCCESS, consumedEvents.get());
+            assertEquals(consumedEvents.get(), testRunner.getCounterValue(ConsumeBoxEnterpriseEvents.COUNTER_RECORDS_PROCESSED));
         } finally {
             // We can't use try with resources, as Executors use a shutdown method
             // which indefinitely waits for submitted tasks.

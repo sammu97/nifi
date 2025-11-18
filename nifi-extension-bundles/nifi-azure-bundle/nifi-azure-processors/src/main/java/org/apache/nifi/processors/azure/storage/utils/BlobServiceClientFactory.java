@@ -37,6 +37,7 @@ public class BlobServiceClientFactory extends AbstractStorageClientFactory<Azure
         super(logger, proxyOptions);
     }
 
+    @Override
     protected BlobServiceClient createStorageClient(final AzureStorageCredentialsDetails_v12 credentialsDetails, final ProxyOptions proxyOptions) {
         final BlobServiceClientBuilder clientBuilder = new BlobServiceClientBuilder();
         clientBuilder.endpoint(String.format("https://%s.%s", credentialsDetails.getAccountName(), credentialsDetails.getEndpointSuffix()));
@@ -79,8 +80,6 @@ public class BlobServiceClientFactory extends AbstractStorageClientFactory<Azure
                 TokenCredential credential = tokenRequestContext -> Mono.just(credentialsDetails.getAccessToken());
                 clientBuilder.credential(credential);
                 break;
-            default:
-                throw new IllegalArgumentException("Unhandled credentials type: " + credentialsDetails.getCredentialsType());
         }
     }
 }

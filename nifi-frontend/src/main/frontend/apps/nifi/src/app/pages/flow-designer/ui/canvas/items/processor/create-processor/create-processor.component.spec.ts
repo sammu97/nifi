@@ -21,9 +21,19 @@ import { CreateProcessor } from './create-processor.component';
 import { CreateProcessorDialogRequest } from '../../../../../state/flow';
 import { MAT_DIALOG_DATA, MatDialogRef } from '@angular/material/dialog';
 import { provideMockStore } from '@ngrx/store/testing';
-import { initialState } from '../../../../../../../state/extension-types/extension-types.reducer';
+import { initialExtensionsTypesState } from '../../../../../../../state/extension-types/extension-types.reducer';
+import { extensionTypesFeatureKey } from '../../../../../../../state/extension-types';
+import { initialState as initialFlowState } from '../../../../../state/flow/flow.reducer';
+import { flowFeatureKey } from '../../../../../state/flow';
 import { ComponentType } from '@nifi/shared';
 import { NoopAnimationsModule } from '@angular/platform-browser/animations';
+import { DocumentedType } from '../../../../../../../state/shared';
+import { MatIconTestingModule } from '@angular/material/icon/testing';
+import { MockComponent } from 'ng-mocks';
+import { ExtensionCreation } from '../../../../../../../ui/common/extension-creation/extension-creation.component';
+import { of } from 'rxjs';
+import { initialState as initialErrorState } from '../../../../../../../state/error/error.reducer';
+import { errorFeatureKey } from '../../../../../../../state/error';
 
 describe('CreateProcessor', () => {
     let component: CreateProcessor;
@@ -40,34 +50,45 @@ describe('CreateProcessor', () => {
                 version: 0,
                 clientId: 'user'
             }
-        },
-        processorTypes: [
-            {
-                type: 'org.apache.nifi.processors.stateful.analysis.AttributeRollingWindow',
-                bundle: {
-                    group: 'org.apache.nifi',
-                    artifact: 'nifi-stateful-analysis-nar',
-                    version: '2.0.0-SNAPSHOT'
-                },
-                description:
-                    "Track a Rolling Window based on evaluating an Expression Language expression on each FlowFile and add that value to the processor's state. Each FlowFile will be emitted with the count of FlowFiles and total aggregate value of values processed in the current time window.",
-                restricted: false,
-                tags: ['rolling', 'data science', 'Attribute Expression Language', 'state', 'window']
-            }
-        ]
+        }
     };
+
+    const processorTypes: DocumentedType[] = [
+        {
+            type: 'org.apache.nifi.processors.stateful.analysis.AttributeRollingWindow',
+            bundle: {
+                group: 'org.apache.nifi',
+                artifact: 'nifi-stateful-analysis-nar',
+                version: '2.0.0-SNAPSHOT'
+            },
+            description:
+                "Track a Rolling Window based on evaluating an Expression Language expression on each FlowFile and add that value to the processor's state. Each FlowFile will be emitted with the count of FlowFiles and total aggregate value of values processed in the current time window.",
+            restricted: false,
+            tags: ['rolling', 'data science', 'Attribute Expression Language', 'state', 'window']
+        }
+    ];
 
     beforeEach(() => {
         TestBed.configureTestingModule({
-            imports: [CreateProcessor, NoopAnimationsModule],
+            imports: [CreateProcessor, NoopAnimationsModule, MatIconTestingModule, MockComponent(ExtensionCreation)],
             providers: [
                 { provide: MAT_DIALOG_DATA, useValue: data },
-                provideMockStore({ initialState }),
+                provideMockStore({
+                    initialState: {
+                        [errorFeatureKey]: initialErrorState,
+                        [extensionTypesFeatureKey]: initialExtensionsTypesState,
+                        canvas: {
+                            [flowFeatureKey]: initialFlowState
+                        }
+                    }
+                }),
                 { provide: MatDialogRef, useValue: null }
             ]
         });
         fixture = TestBed.createComponent(CreateProcessor);
         component = fixture.componentInstance;
+        component.processorTypes$ = of(processorTypes);
+        component.processorTypesLoadingStatus$ = of('success');
         fixture.detectChanges();
     });
 

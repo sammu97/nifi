@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-import { Component, OnDestroy, OnInit } from '@angular/core';
-import { NgOptimizedImage } from '@angular/common';
+import { Component, OnDestroy, OnInit, inject } from '@angular/core';
+import { AsyncPipe, NgOptimizedImage } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { MatDividerModule } from '@angular/material/divider';
 import { MatMenuModule } from '@angular/material/menu';
@@ -46,6 +46,8 @@ import {
 import { selectClusterSummary } from '../../../state/cluster-summary/cluster-summary.selectors';
 import { selectLoginConfiguration } from '../../../state/login-configuration/login-configuration.selectors';
 import { selectBackNavigation } from '../../../state/navigation/navigation.selectors';
+import { popBackNavigation } from '../../../state/navigation/navigation.actions';
+import { selectAbout } from '../../../state/about/about.selectors';
 
 @Component({
     selector: 'navigation',
@@ -57,12 +59,18 @@ import { selectBackNavigation } from '../../../state/navigation/navigation.selec
         RouterLink,
         MatButtonModule,
         FormsModule,
-        MatCheckboxModule
+        MatCheckboxModule,
+        AsyncPipe
     ],
     templateUrl: './navigation.component.html',
     styleUrls: ['./navigation.component.scss']
 })
 export class Navigation implements OnInit, OnDestroy {
+    private store = inject<Store<NiFiState>>(Store);
+    private storage = inject(Storage);
+    private themingService = inject(ThemingService);
+    about$ = this.store.select(selectAbout);
+
     theme: any | undefined;
     darkModeOn: boolean | undefined;
     LIGHT_THEME: string = LIGHT_THEME;
@@ -76,19 +84,15 @@ export class Navigation implements OnInit, OnDestroy {
     clusterSummary = this.store.selectSignal(selectClusterSummary);
     backNavigation = this.store.selectSignal(selectBackNavigation);
 
-    constructor(
-        private store: Store<NiFiState>,
-        private storage: Storage,
-        private themingService: ThemingService
-    ) {
+    constructor() {
         this.darkModeOn = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
-        this.theme = this.storage.getItem('theme');
+        this.theme = this.storage.getItem('theme') ? this.storage.getItem('theme') : OS_SETTING;
         this.disableAnimations = this.storage.getItem('disable-animations');
 
         // Watch for changes of the preference
         window.matchMedia('(prefers-color-scheme: dark)').addListener((e) => {
             this.darkModeOn = e.matches;
-            this.theme = this.storage.getItem('theme');
+            this.theme = this.storage.getItem('theme') ? this.storage.getItem('theme') : OS_SETTING;
         });
     }
 
@@ -157,5 +161,9 @@ export class Navigation implements OnInit, OnDestroy {
         this.disableAnimations = disableAnimations;
         this.storage.setItem('disable-animations', this.disableAnimations.toString());
         window.location.reload();
+    }
+
+    popBackNavigation(): void {
+        this.store.dispatch(popBackNavigation());
     }
 }

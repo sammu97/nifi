@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-import { Injectable } from '@angular/core';
+import { Injectable, inject } from '@angular/core';
 import { Actions, createEffect, ofType } from '@ngrx/effects';
 import { concatLatestFrom } from '@ngrx/operators';
 import * as FlowAnalysisRuleActions from './flow-analysis-rules.actions';
@@ -23,7 +23,6 @@ import { catchError, from, map, of, switchMap, take, takeUntil, tap } from 'rxjs
 import { MatDialog } from '@angular/material/dialog';
 import { Store } from '@ngrx/store';
 import { NiFiState } from '../../../../state';
-import { selectFlowAnalysisRuleTypes } from '../../../../state/extension-types/extension-types.selectors';
 import { LARGE_DIALOG, SMALL_DIALOG, XL_DIALOG, YesNoDialog } from '@nifi/shared';
 import { FlowAnalysisRuleService } from '../../service/flow-analysis-rule.service';
 import { ManagementControllerServiceService } from '../../service/management-controller-service.service';
@@ -40,7 +39,8 @@ import {
 import { PropertyTableHelperService } from '../../../../service/property-table-helper.service';
 import * as ErrorActions from '../../../../state/error/error.actions';
 import { ErrorHelper } from '../../../../service/error-helper.service';
-import { selectStatus } from './flow-analysis-rules.selectors';
+import { selectLoadedTimestamp } from './flow-analysis-rules.selectors';
+import { initialState } from './flow-analysis-rules.reducer';
 import { HttpErrorResponse } from '@angular/common/http';
 import { ChangeComponentVersionDialog } from '../../../../ui/common/change-component-version-dialog/change-component-version-dialog';
 import { ExtensionTypesService } from '../../../../service/extension-types.service';
@@ -58,23 +58,21 @@ import { ErrorContextKey } from '../../../../state/error';
 
 @Injectable()
 export class FlowAnalysisRulesEffects {
-    constructor(
-        private actions$: Actions,
-        private store: Store<NiFiState>,
-        private managementControllerServiceService: ManagementControllerServiceService,
-        private flowAnalysisRuleService: FlowAnalysisRuleService,
-        private errorHelper: ErrorHelper,
-        private dialog: MatDialog,
-        private router: Router,
-        private propertyTableHelperService: PropertyTableHelperService,
-        private extensionTypesService: ExtensionTypesService
-    ) {}
+    private actions$ = inject(Actions);
+    private store = inject<Store<NiFiState>>(Store);
+    private managementControllerServiceService = inject(ManagementControllerServiceService);
+    private flowAnalysisRuleService = inject(FlowAnalysisRuleService);
+    private errorHelper = inject(ErrorHelper);
+    private dialog = inject(MatDialog);
+    private router = inject(Router);
+    private propertyTableHelperService = inject(PropertyTableHelperService);
+    private extensionTypesService = inject(ExtensionTypesService);
 
     loadFlowAnalysisRule$ = createEffect(() =>
         this.actions$.pipe(
             ofType(FlowAnalysisRuleActions.loadFlowAnalysisRules),
-            concatLatestFrom(() => this.store.select(selectStatus)),
-            switchMap(([, status]) =>
+            concatLatestFrom(() => this.store.select(selectLoadedTimestamp)),
+            switchMap(([, loadedTimestamp]) =>
                 from(this.flowAnalysisRuleService.getFlowAnalysisRule()).pipe(
                     map((response) =>
                         FlowAnalysisRuleActions.loadFlowAnalysisRulesSuccess({
@@ -85,8 +83,26 @@ export class FlowAnalysisRulesEffects {
                         })
                     ),
                     catchError((errorResponse: HttpErrorResponse) =>
-                        of(this.errorHelper.handleLoadingError(status, errorResponse))
+                        of(
+                            FlowAnalysisRuleActions.loadFlowAnalysisRulesError({
+                                errorResponse,
+                                loadedTimestamp,
+                                status: loadedTimestamp !== initialState.loadedTimestamp ? 'success' : 'pending'
+                            })
+                        )
                     )
+                )
+            )
+        )
+    );
+
+    loadFlowAnalysisRulesError$ = createEffect(() =>
+        this.actions$.pipe(
+            ofType(FlowAnalysisRuleActions.loadFlowAnalysisRulesError),
+            map((action) =>
+                this.errorHelper.handleLoadingError(
+                    action.loadedTimestamp !== initialState.loadedTimestamp,
+                    action.errorResponse
                 )
             )
         )
@@ -96,13 +112,9 @@ export class FlowAnalysisRulesEffects {
         () =>
             this.actions$.pipe(
                 ofType(FlowAnalysisRuleActions.openNewFlowAnalysisRuleDialog),
-                concatLatestFrom(() => this.store.select(selectFlowAnalysisRuleTypes)),
-                tap(([, flowAnalysisRuleTypes]) => {
+                tap(() => {
                     this.dialog.open(CreateFlowAnalysisRule, {
-                        ...LARGE_DIALOG,
-                        data: {
-                            flowAnalysisRuleTypes
-                        }
+                        ...LARGE_DIALOG
                     });
                 })
             ),
@@ -562,5 +574,38 @@ export class FlowAnalysisRulesEffects {
                 })
             ),
         { dispatch: false }
+    );
+
+    clearFlowAnalysisRuleBulletins$ = createEffect(() =>
+        this.actions$.pipe(
+            ofType(FlowAnalysisRuleActions.clearFlowAnalysisRuleBulletins),
+            map((action) => action.request),
+            switchMap((request) =>
+                from(
+                    this.flowAnalysisRuleService.clearBulletins({
+                        uri: request.uri,
+                        fromTimestamp: request.fromTimestamp
+                    })
+                ).pipe(
+                    map((response) =>
+                        FlowAnalysisRuleActions.clearFlowAnalysisRuleBulletinsSuccess({
+                            response: {
+                                componentId: request.componentId,
+                                bulletinsCleared: response.bulletinsCleared || 0,
+                                bulletins: response.bulletins || [],
+                                componentType: request.componentType
+                            }
+                        })
+                    ),
+                    catchError((errorResponse: HttpErrorResponse) =>
+                        of(
+                            FlowAnalysisRuleActions.flowAnalysisRuleSnackbarApiError({
+                                error: this.errorHelper.getErrorString(errorResponse)
+                            })
+                        )
+                    )
+                )
+            )
+        )
     );
 }

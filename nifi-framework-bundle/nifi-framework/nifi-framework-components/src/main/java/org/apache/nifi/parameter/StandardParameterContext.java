@@ -16,7 +16,7 @@
  */
 package org.apache.nifi.parameter;
 
-import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.Strings;
 import org.apache.commons.lang3.builder.HashCodeBuilder;
 import org.apache.nifi.authorization.AccessDeniedException;
 import org.apache.nifi.authorization.Authorizer;
@@ -524,7 +524,7 @@ public class StandardParameterContext implements ParameterContext {
      * @param parameterContexts A list of proposed ParameterContexts
      */
     private void verifyNoCycles(final List<ParameterContext> parameterContexts) {
-        final Stack<String> traversedIds = new Stack<>();
+        final Stack<String> traversedIds = new Stack<>(); //NOPMD
         traversedIds.push(id);
         verifyNoCycles(traversedIds, parameterContexts);
     }
@@ -536,7 +536,7 @@ public class StandardParameterContext implements ParameterContext {
      * @param parameterContexts The ParameterContexts for which to check for cycles
      * @throws IllegalStateException If a cycle was detected
      */
-    private void verifyNoCycles(final Stack<String> traversedIds, final List<ParameterContext> parameterContexts) {
+    private void verifyNoCycles(final Stack<String> traversedIds, final List<ParameterContext> parameterContexts) { //NOPMD
         for (final ParameterContext parameterContext : parameterContexts) {
             final String id = parameterContext.getIdentifier();
             if (traversedIds.contains(id)) {
@@ -629,7 +629,7 @@ public class StandardParameterContext implements ParameterContext {
             if (currentEffectiveParameters.containsKey(proposedParameterDescriptor)) {
                 final Parameter currentParameter = currentEffectiveParameters.get(proposedParameterDescriptor);
                 if (!currentParameter.equals(proposedParameter) || currentParameter.getDescriptor().isSensitive() != proposedParameter.getDescriptor().isSensitive()
-                        || !StringUtils.equals(currentParameter.getDescriptor().getDescription(), proposedParameter.getDescriptor().getDescription())) {
+                        || !Strings.CS.equals(currentParameter.getDescriptor().getDescription(), proposedParameter.getDescriptor().getDescription())) {
                     // The parameter has been updated in some way
                     effectiveParameterUpdates.put(proposedParameterDescriptor.getName(), proposedParameter);
                 }
@@ -662,8 +662,8 @@ public class StandardParameterContext implements ParameterContext {
         }
 
         final String parameterName = parameter.getDescriptor().getName();
-        return parameterReferenceManager.getProcessorsReferencing(this, parameterName).size() > 0
-                || parameterReferenceManager.getControllerServicesReferencing(this, parameterName).size() > 0;
+        return !parameterReferenceManager.getProcessorsReferencing(this, parameterName).isEmpty()
+                || !parameterReferenceManager.getControllerServicesReferencing(this, parameterName).isEmpty();
     }
 
     @Override

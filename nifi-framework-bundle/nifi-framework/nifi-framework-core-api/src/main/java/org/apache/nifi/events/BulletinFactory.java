@@ -21,6 +21,8 @@ import org.apache.nifi.groups.ProcessGroup;
 import org.apache.nifi.reporting.Bulletin;
 import org.apache.nifi.reporting.ComponentType;
 
+import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.util.concurrent.atomic.AtomicLong;
 
 public final class BulletinFactory {
@@ -50,17 +52,34 @@ public final class BulletinFactory {
         return createBulletin(groupId, groupName, connectable.getIdentifier(), type, connectable.getName(), category, severity, message, groupPath, flowFileUUID);
     }
 
+    public static Bulletin createBulletin(final Connectable connectable, final String category, final String severity, final String message, final String flowFileUUID, final Throwable t) {
+        final Bulletin bulletin = createBulletin(connectable, category, severity, message, flowFileUUID);
+        if (t != null) {
+            bulletin.setStackTrace(formatStackTrace(t));
+        }
+        return bulletin;
+    }
+
+    public static Bulletin createBulletin(final Connectable connectable, final String category, final String severity, final String message, final Throwable t) {
+        final Bulletin bulletin = createBulletin(connectable, category, severity, message);
+        if (t != null) {
+            bulletin.setStackTrace(formatStackTrace(t));
+        }
+        return bulletin;
+    }
+
     private static String buildGroupPath(ProcessGroup group) {
         if (group == null) {
             return null;
         } else {
-            String path = group.getName();
+            StringBuilder path = new StringBuilder(group.getName());
             ProcessGroup parent = group.getParent();
             while (parent != null) {
-                path = parent.getName() + " / " + path;
+                path.insert(0, " / ");
+                path.insert(0, parent.getName());
                 parent = parent.getParent();
             }
-            return path;
+            return path.toString();
         }
     }
 
@@ -77,6 +96,15 @@ public final class BulletinFactory {
         return bulletin;
     }
 
+    public static Bulletin createBulletin(final String groupId, final String sourceId, final ComponentType sourceType, final String sourceName,
+        final String category, final String severity, final String message, final Throwable t) {
+        final Bulletin bulletin = createBulletin(groupId, sourceId, sourceType, sourceName, category, severity, message);
+        if (t != null) {
+            bulletin.setStackTrace(formatStackTrace(t));
+        }
+        return bulletin;
+    }
+
     public static Bulletin createBulletin(final String groupId, final String groupName, final String sourceId, final ComponentType sourceType,
             final String sourceName, final String category, final String severity, final String message) {
         final Bulletin bulletin = new ComponentBulletin(currentId.getAndIncrement());
@@ -88,6 +116,15 @@ public final class BulletinFactory {
         bulletin.setCategory(category);
         bulletin.setLevel(severity);
         bulletin.setMessage(message);
+        return bulletin;
+    }
+
+    public static Bulletin createBulletin(final String groupId, final String groupName, final String sourceId, final ComponentType sourceType,
+            final String sourceName, final String category, final String severity, final String message, final Throwable t) {
+        final Bulletin bulletin = createBulletin(groupId, groupName, sourceId, sourceType, sourceName, category, severity, message);
+        if (t != null) {
+            bulletin.setStackTrace(formatStackTrace(t));
+        }
         return bulletin;
     }
 
@@ -107,6 +144,15 @@ public final class BulletinFactory {
         return bulletin;
     }
 
+    public static Bulletin createBulletin(final String groupId, final String groupName, final String sourceId, final ComponentType sourceType,
+            final String sourceName, final String category, final String severity, final String message, final String groupPath, final String flowFileUUID, final Throwable t) {
+        final Bulletin bulletin = createBulletin(groupId, groupName, sourceId, sourceType, sourceName, category, severity, message, groupPath, flowFileUUID);
+        if (t != null) {
+            bulletin.setStackTrace(formatStackTrace(t));
+        }
+        return bulletin;
+    }
+
     public static Bulletin createBulletin(final String category, final String severity, final String message) {
         final Bulletin bulletin = new SystemBulletin(currentId.getAndIncrement());
         bulletin.setCategory(category);
@@ -116,20 +162,32 @@ public final class BulletinFactory {
         return bulletin;
     }
 
+    public static Bulletin createBulletin(final String category, final String severity, final String message, final Throwable t) {
+        final Bulletin bulletin = createBulletin(category, severity, message);
+        if (t != null) {
+            bulletin.setStackTrace(formatStackTrace(t));
+        }
+        return bulletin;
+    }
+
     private static ComponentType getComponentType(final Connectable connectable) {
-        switch (connectable.getConnectableType()) {
-            case REMOTE_INPUT_PORT:
-            case REMOTE_OUTPUT_PORT:
-                return ComponentType.REMOTE_PROCESS_GROUP;
-            case INPUT_PORT:
-                return ComponentType.INPUT_PORT;
-            case OUTPUT_PORT:
-                return ComponentType.OUTPUT_PORT;
-            case STATELESS_GROUP:
-                return ComponentType.PROCESS_GROUP;
-            case PROCESSOR:
-            default:
-                return ComponentType.PROCESSOR;
+        return switch (connectable.getConnectableType()) {
+            case REMOTE_INPUT_PORT, REMOTE_OUTPUT_PORT -> ComponentType.REMOTE_PROCESS_GROUP;
+            case INPUT_PORT -> ComponentType.INPUT_PORT;
+            case OUTPUT_PORT -> ComponentType.OUTPUT_PORT;
+            case STATELESS_GROUP -> ComponentType.PROCESS_GROUP;
+            default -> ComponentType.PROCESSOR;
+        };
+    }
+
+    private static String formatStackTrace(final Throwable t) {
+        try (final StringWriter sw = new StringWriter(); final PrintWriter pw = new PrintWriter(sw)) {
+            t.printStackTrace(pw);
+            pw.flush();
+            return sw.toString();
+        } catch (final Exception e) {
+            // Fallback to Throwable#toString if printing fails for any reason
+            return t.toString();
         }
     }
 }

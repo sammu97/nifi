@@ -28,11 +28,12 @@ import org.apache.nifi.components.PropertyDescriptor;
 import org.apache.nifi.expression.ExpressionLanguageScope;
 import org.apache.nifi.flowfile.FlowFile;
 import org.apache.nifi.flowfile.attributes.CoreAttributes;
+import org.apache.nifi.migration.PropertyConfiguration;
 import org.apache.nifi.processor.ProcessContext;
 import org.apache.nifi.processor.ProcessSession;
 import org.apache.nifi.processor.exception.ProcessException;
 import org.apache.nifi.processor.util.StandardValidators;
-import org.apache.nifi.processors.aws.v2.AbstractAwsSyncProcessor;
+import org.apache.nifi.processors.aws.AbstractAwsSyncProcessor;
 import software.amazon.awssdk.services.sqs.SqsClient;
 import software.amazon.awssdk.services.sqs.SqsClientBuilder;
 import software.amazon.awssdk.services.sqs.model.MessageAttributeValue;
@@ -47,6 +48,9 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
+
+import static org.apache.nifi.processors.aws.region.RegionUtil.CUSTOM_REGION;
+import static org.apache.nifi.processors.aws.region.RegionUtil.REGION;
 
 @SupportsBatching
 @SeeAlso({ GetSQS.class, DeleteSQS.class })
@@ -77,7 +81,6 @@ public class PutSQS extends AbstractAwsSyncProcessor<SqsClient, SqsClientBuilder
 
     public static final PropertyDescriptor DELAY = new PropertyDescriptor.Builder()
             .name("Delay")
-            .displayName("Delay")
             .description("The amount of time to delay the message before it becomes available to consumers")
             .required(true)
             .addValidator(StandardValidators.TIME_PERIOD_VALIDATOR)
@@ -85,8 +88,7 @@ public class PutSQS extends AbstractAwsSyncProcessor<SqsClient, SqsClientBuilder
             .build();
 
     public static final PropertyDescriptor MESSAGEGROUPID = new PropertyDescriptor.Builder()
-            .name("message-group-id")
-            .displayName("Message Group ID")
+            .name("Message Group ID")
             .description("If using FIFO, the message group to which the FlowFile belongs")
             .required(false)
             .addValidator(StandardValidators.NON_EMPTY_VALIDATOR)
@@ -94,8 +96,7 @@ public class PutSQS extends AbstractAwsSyncProcessor<SqsClient, SqsClientBuilder
             .build();
 
     public static final PropertyDescriptor MESSAGEDEDUPLICATIONID = new PropertyDescriptor.Builder()
-            .name("deduplication-message-id")
-            .displayName("Deduplication Message ID")
+            .name("Deduplication Message ID")
             .description("The token used for deduplication of sent messages")
             .required(false)
             .addValidator(StandardValidators.NON_EMPTY_VALIDATOR)
@@ -105,6 +106,7 @@ public class PutSQS extends AbstractAwsSyncProcessor<SqsClient, SqsClientBuilder
     public static final List<PropertyDescriptor> PROPERTY_DESCRIPTORS = List.of(
         QUEUE_URL,
         REGION,
+        CUSTOM_REGION,
         AWS_CREDENTIALS_PROVIDER_SERVICE,
         SSL_CONTEXT_SERVICE,
         DELAY,
@@ -200,6 +202,13 @@ public class PutSQS extends AbstractAwsSyncProcessor<SqsClient, SqsClientBuilder
         session.transfer(flowFile, REL_SUCCESS);
         final long transmissionMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNanos);
         session.getProvenanceReporter().send(flowFile, queueUrl, transmissionMillis);
+    }
+
+    @Override
+    public void migrateProperties(PropertyConfiguration config) {
+        super.migrateProperties(config);
+        config.renameProperty("message-group-id", MESSAGEGROUPID.getName());
+        config.renameProperty("deduplication-message-id", MESSAGEDEDUPLICATIONID.getName());
     }
 
     @Override

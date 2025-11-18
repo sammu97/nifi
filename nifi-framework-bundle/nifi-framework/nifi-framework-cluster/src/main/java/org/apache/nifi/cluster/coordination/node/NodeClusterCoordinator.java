@@ -54,6 +54,8 @@ import org.apache.nifi.cluster.protocol.message.ConnectionResponseMessage;
 import org.apache.nifi.cluster.protocol.message.DisconnectMessage;
 import org.apache.nifi.cluster.protocol.message.NodeConnectionStatusResponseMessage;
 import org.apache.nifi.cluster.protocol.message.NodeStatusChangeMessage;
+import org.apache.nifi.cluster.protocol.message.NodeStatusesRequestMessage;
+import org.apache.nifi.cluster.protocol.message.NodeStatusesResponseMessage;
 import org.apache.nifi.cluster.protocol.message.OffloadMessage;
 import org.apache.nifi.cluster.protocol.message.ProtocolMessage;
 import org.apache.nifi.cluster.protocol.message.ProtocolMessage.MessageType;
@@ -84,6 +86,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Queue;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
@@ -124,7 +127,7 @@ public class NodeClusterCoordinator implements ClusterCoordinator, ProtocolHandl
     private volatile boolean requireElection = true;
 
     private final ConcurrentMap<String, NodeConnectionStatus> nodeStatuses = new ConcurrentHashMap<>();
-    private final ConcurrentMap<String, CircularFifoQueue<NodeEvent>> nodeEvents = new ConcurrentHashMap<>();
+    private final ConcurrentMap<String, CircularFifoQueue<NodeEvent>> nodeEvents = new ConcurrentHashMap<>(); //NOPMD
 
     private final List<ClusterTopologyEventListener> eventListeners = new CopyOnWriteArrayList<>();
 
@@ -231,7 +234,7 @@ public class NodeClusterCoordinator implements ClusterCoordinator, ProtocolHandl
         }
     }
 
-
+    @Override
     public void registerEventListener(final ClusterTopologyEventListener eventListener) {
         this.eventListeners.add(eventListener);
     }
@@ -274,6 +277,7 @@ public class NodeClusterCoordinator implements ClusterCoordinator, ProtocolHandl
         return nodeId;
     }
 
+    @Override
     public NodeIdentifier waitForElectedClusterCoordinator() {
         return waitForNodeIdentifier(() -> getElectedActiveCoordinatorNode(false));
     }
@@ -634,6 +638,22 @@ public class NodeClusterCoordinator implements ClusterCoordinator, ProtocolHandl
         return nodeStatuses.get(nodeId.getId());
     }
 
+    @Override
+    public NodeConnectionStatus fetchConnectionStatus(final NodeIdentifier nodeId) {
+        final NodeStatusesResponseMessage responseMessage = nodeProtocolSender.nodeStatuses(new NodeStatusesRequestMessage());
+        if (responseMessage == null || responseMessage.getNodeStatuses() == null) {
+            logger.warn("Failed to fetch connection status for {}", nodeId);
+            return null;
+        }
+
+        logger.debug("Received Node Statuses Response [{}]", responseMessage.getNodeStatuses());
+
+        return responseMessage.getNodeStatuses().stream()
+                .filter(s -> s.getNodeIdentifier().equals(nodeId))
+                .findFirst()
+                .orElse(null);
+    }
+
     private NodeConnectionState getConnectionState(final NodeIdentifier nodeId) {
         final NodeConnectionStatus status = getConnectionStatus(nodeId);
         return status == null ? null : status.getState();
@@ -834,7 +854,7 @@ public class NodeClusterCoordinator implements ClusterCoordinator, ProtocolHandl
 
     @Override
     public List<NodeEvent> getNodeEvents(final NodeIdentifier nodeId) {
-        final CircularFifoQueue<NodeEvent> eventQueue = nodeEvents.get(nodeId.getId());
+        final Queue<NodeEvent> eventQueue = nodeEvents.get(nodeId.getId());
         if (eventQueue == null) {
             return Collections.emptyList();
         }
@@ -858,7 +878,7 @@ public class NodeClusterCoordinator implements ClusterCoordinator, ProtocolHandl
 
     private void addNodeEvent(final NodeIdentifier nodeId, final Severity severity, final String message) {
         final NodeEvent event = new Event(nodeId.toString(), message, severity);
-        final CircularFifoQueue<NodeEvent> eventQueue = nodeEvents.computeIfAbsent(nodeId.getId(), id -> new CircularFifoQueue<>());
+        final Queue<NodeEvent> eventQueue = nodeEvents.computeIfAbsent(nodeId.getId(), id -> new CircularFifoQueue<>());
         synchronized (eventQueue) {
             eventQueue.add(event);
         }
@@ -1031,6 +1051,7 @@ public class NodeClusterCoordinator implements ClusterCoordinator, ProtocolHandl
         return future;
     }
 
+    @Override
     public void validateHeartbeat(final NodeHeartbeat heartbeat) {
         final long localUpdateCount = revisionManager.getRevisionUpdateCount();
         final long nodeUpdateCount = heartbeat.getRevisionUpdateCount();

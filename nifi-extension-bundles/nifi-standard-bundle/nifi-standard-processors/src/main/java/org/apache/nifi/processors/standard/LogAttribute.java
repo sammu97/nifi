@@ -30,6 +30,7 @@ import org.apache.nifi.components.PropertyDescriptor;
 import org.apache.nifi.expression.ExpressionLanguageScope;
 import org.apache.nifi.flowfile.FlowFile;
 import org.apache.nifi.logging.ComponentLog;
+import org.apache.nifi.migration.PropertyConfiguration;
 import org.apache.nifi.processor.AbstractProcessor;
 import org.apache.nifi.processor.ProcessContext;
 import org.apache.nifi.processor.ProcessSession;
@@ -79,8 +80,7 @@ public class LogAttribute extends AbstractProcessor {
             .addValidator(StandardValidators.NON_EMPTY_VALIDATOR)
             .build();
     public static final PropertyDescriptor ATTRIBUTES_TO_LOG_REGEX = new PropertyDescriptor.Builder()
-            .name("attributes-to-log-regex")
-            .displayName("Attributes to Log by Regular Expression")
+            .name("Attributes to Log Regular Expression")
             .required(false)
             .defaultValue(".*")
             .description("A regular expression indicating the Attributes to Log. If not specified, all attributes will be logged unless `Attributes to Log` is modified." +
@@ -95,8 +95,7 @@ public class LogAttribute extends AbstractProcessor {
             .addValidator(StandardValidators.NON_EMPTY_VALIDATOR)
             .build();
     public static final PropertyDescriptor ATTRIBUTES_TO_IGNORE_REGEX = new PropertyDescriptor.Builder()
-            .name("attributes-to-ignore-regex")
-            .displayName("Attributes to Ignore by Regular Expression")
+            .name("Attributes to Ignore Regular Expression")
             .required(false)
             .description("A regular expression indicating the Attributes to Ignore. If not specified, no attributes will be ignored unless `Attributes to Ignore` is modified." +
                     " There's an OR relationship between the two properties.")
@@ -104,7 +103,6 @@ public class LogAttribute extends AbstractProcessor {
             .build();
     public static final PropertyDescriptor OUTPUT_FORMAT = new PropertyDescriptor.Builder()
             .name("Output Format")
-            .displayName("Output Format")
             .description("Specifies the format to use for logging FlowFile attributes")
             .required(true)
             .allowableValues(OUTPUT_FORMAT_LINE_PER_ATTRIBUTE, OUTPUT_FORMAT_SINGLE_LINE)
@@ -119,7 +117,6 @@ public class LogAttribute extends AbstractProcessor {
             .build();
     static final PropertyDescriptor LOG_FLOWFILE_PROPERTIES = new PropertyDescriptor.Builder()
             .name("Log FlowFile Properties")
-            .displayName("Log FlowFile Properties")
             .description("Specifies whether or not to log FlowFile \"properties\", such as Entry Date, Lineage Start Date, and content size")
             .required(true)
             .allowableValues("true", "false")
@@ -134,9 +131,8 @@ public class LogAttribute extends AbstractProcessor {
             .build();
 
     public static final PropertyDescriptor CHARSET = new PropertyDescriptor.Builder()
-            .name("character-set")
-            .displayName("Character Set")
-            .description("The name of the CharacterSet to use")
+            .name("Character Set")
+            .description("The name of the Character Set to use")
             .expressionLanguageSupported(ExpressionLanguageScope.FLOWFILE_ATTRIBUTES)
             .addValidator(StandardValidators.CHARACTER_SET_VALIDATOR)
             .defaultValue(Charset.defaultCharset().name())
@@ -158,7 +154,7 @@ public class LogAttribute extends AbstractProcessor {
 
     public static final String FIFTY_DASHES = "--------------------------------------------------";
 
-    public static enum DebugLevels {
+    public enum DebugLevels {
         trace, debug, info, warn, error
     }
 
@@ -268,9 +264,6 @@ public class LogAttribute extends AbstractProcessor {
             case error:
                 logger.error(outputMessage);
                 break;
-            default:
-                logger.debug(outputMessage);
-                break;
         }
 
         return outputMessage;
@@ -340,6 +333,13 @@ public class LogAttribute extends AbstractProcessor {
 
         processFlowFile(LOG, logLevel, flowFile, session, context);
         session.transfer(flowFile, REL_SUCCESS);
+    }
+
+    @Override
+    public void migrateProperties(PropertyConfiguration config) {
+        config.renameProperty("attributes-to-log-regex", ATTRIBUTES_TO_LOG_REGEX.getName());
+        config.renameProperty("attributes-to-ignore-regex", ATTRIBUTES_TO_IGNORE_REGEX.getName());
+        config.renameProperty("character-set", CHARSET.getName());
     }
 
     protected static class FlowFilePayloadCallback implements InputStreamCallback {

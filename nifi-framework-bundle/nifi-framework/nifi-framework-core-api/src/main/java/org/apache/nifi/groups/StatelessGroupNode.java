@@ -32,16 +32,18 @@ public interface StatelessGroupNode extends Connectable {
 
     void initialize(StatelessGroupNodeInitializationContext initializationContext);
 
+    @Override
     ProcessGroup getProcessGroup();
 
     void start(ScheduledExecutorService executorService, SchedulingAgentCallback schedulingAgentCallback, LifecycleState lifecycleState);
-
 
     CompletableFuture<Void> stop(ProcessScheduler processScheduler, ScheduledExecutorService executor, SchedulingAgent schedulingAgent, LifecycleState scheduleState);
 
     ScheduledState getCurrentState();
 
     ScheduledState getDesiredState();
+
+    void setDesiredState(ScheduledState desiredState);
 
     long getBoredYieldDuration(TimeUnit timeUnit);
 }

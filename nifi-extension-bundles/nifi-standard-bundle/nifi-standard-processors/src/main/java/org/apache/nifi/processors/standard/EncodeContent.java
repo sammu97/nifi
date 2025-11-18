@@ -17,8 +17,10 @@
 package org.apache.nifi.processors.standard;
 
 import org.apache.commons.codec.DecoderException;
+import org.apache.commons.codec.binary.Base32;
 import org.apache.commons.codec.binary.Base32InputStream;
 import org.apache.commons.codec.binary.Base32OutputStream;
+import org.apache.commons.codec.binary.Base64;
 import org.apache.commons.codec.binary.Base64InputStream;
 import org.apache.commons.codec.binary.Base64OutputStream;
 import org.apache.commons.codec.binary.Hex;
@@ -78,7 +80,6 @@ public class EncodeContent extends AbstractProcessor {
 
     public static final PropertyDescriptor LINE_OUTPUT_MODE = new PropertyDescriptor.Builder()
             .name("Line Output Mode")
-            .displayName("Line Output Mode")
             .description("Controls the line formatting for encoded content based on selected property values.")
             .required(true)
             .defaultValue(LineOutputMode.SINGLE_LINE)
@@ -90,7 +91,6 @@ public class EncodeContent extends AbstractProcessor {
 
     public static final PropertyDescriptor ENCODED_LINE_LENGTH = new PropertyDescriptor.Builder()
             .name("Encoded Line Length")
-            .displayName("Encoded Line Length")
             .description("Each line of encoded data will contain up to the configured number of characters, rounded down to the nearest multiple of 4.")
             .required(true)
             .defaultValue("76")
@@ -192,10 +192,15 @@ public class EncodeContent extends AbstractProcessor {
 
         @Override
         public void process(final InputStream in, final OutputStream out) throws IOException {
-            try (Base64OutputStream bos = new Base64OutputStream(out,
-                true,
-                this.lineLength,
-                this.lineSeparator.getBytes())) {
+            try (Base64OutputStream bos = new Base64OutputStream.Builder()
+                    .setOutputStream(out)
+                    .setEncode(true)
+                    .setBaseNCodec(
+                            Base64.builder()
+                                    .setLineLength(this.lineLength)
+                                    .setLineSeparator(this.lineSeparator.getBytes())
+                                    .get())
+                    .get()) {
                 StreamUtils.copy(in, bos);
             }
         }
@@ -225,7 +230,15 @@ public class EncodeContent extends AbstractProcessor {
 
         @Override
         public void process(final InputStream in, final OutputStream out) throws IOException {
-            try (Base32OutputStream bos = new Base32OutputStream(out, true, this.lineLength, this.lineSeparator.getBytes())) {
+            try (Base32OutputStream bos = new Base32OutputStream.Builder()
+                    .setOutputStream(out)
+                    .setEncode(true)
+                    .setBaseNCodec(
+                            Base32.builder()
+                                    .setLineLength(this.lineLength)
+                                    .setLineSeparator(this.lineSeparator.getBytes())
+                                    .get())
+                    .get()) {
                 StreamUtils.copy(in, bos);
             }
         }

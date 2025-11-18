@@ -16,7 +16,7 @@
  */
 
 import { Injectable } from '@angular/core';
-import { SelectOption } from '../types';
+import { BulletinEntity, SelectOption } from '../types';
 
 @Injectable({
     providedIn: 'root'
@@ -31,6 +31,7 @@ export class NiFiCommon {
     public static readonly MILLIS_PER_HOUR: number = 3600000;
     public static readonly MILLIS_PER_MINUTE: number = 60000;
     public static readonly MILLIS_PER_SECOND: number = 1000;
+    public static readonly NANOS_PER_MILLI: number = 1000000;
 
     /**
      * Constants for formatting data size.
@@ -242,6 +243,36 @@ export class NiFiCommon {
      */
     public isEmpty(arr: any) {
         return Array.isArray(arr) ? arr.length === 0 : true;
+    }
+
+    /**
+     * Gets the most recent bulletin timestamp from an array of bulletin entities.
+     *
+     * @param bulletins array of bulletin entities
+     * @returns ISO timestamp string of the most recent bulletin, or null if no bulletins
+     */
+    public getMostRecentBulletinTimestamp(bulletins: BulletinEntity[]): string | null {
+        if (this.isEmpty(bulletins)) {
+            return null;
+        }
+
+        let mostRecentTimestampIso: string | null = null;
+        let mostRecentTime: number | null = null;
+
+        for (const bulletinEntity of bulletins) {
+            if (bulletinEntity?.timestampIso) {
+                // Use the new timestampIso field which contains the complete ISO timestamp
+                const timestamp = new Date(bulletinEntity.timestampIso).getTime();
+                if (!isNaN(timestamp)) {
+                    if (mostRecentTime === null || timestamp > mostRecentTime) {
+                        mostRecentTime = timestamp;
+                        mostRecentTimestampIso = bulletinEntity.timestampIso;
+                    }
+                }
+            }
+        }
+
+        return mostRecentTimestampIso;
     }
 
     public isNumber(obj: any) {
@@ -655,9 +686,20 @@ export class NiFiCommon {
      * point this does not take into account any locales.
      *
      * @param {integer} integer
+     * @param {boolean} useCompactNotation - Whether to use compact notation (100K, 1M, etc.) for large numbers
      */
-    public formatInteger(integer: number): string {
+    public formatInteger(integer: number, useCompactNotation: boolean = false): string {
         const locale: string = (navigator && navigator.language) || 'en';
+
+        // For values >= 100,000 and when compact notation is requested, use compact notation (100K, 1M, 2.5B, etc.)
+        if (useCompactNotation && Math.abs(integer) >= 100000) {
+            return new Intl.NumberFormat(locale, {
+                notation: 'compact',
+                maximumFractionDigits: 2
+            }).format(integer);
+        }
+
+        // For all other cases, use the traditional format with commas
         return integer.toLocaleString(locale, { maximumFractionDigits: 0 });
     }
 
@@ -701,5 +743,70 @@ export class NiFiCommon {
      */
     public stripProtocol(url: string): string {
         return this.substringAfterFirst(url, ':');
+    }
+
+    /**
+     * Determines the most severe bulletin from a list of bulletins.
+     * Severity order: ERROR > WARNING > INFO > DEBUG > TRACE
+     */
+    public getMostSevereBulletin(bulletins: BulletinEntity[]): BulletinEntity | null {
+        if (bulletins && bulletins.length > 0) {
+            const mostSevere = bulletins.reduce((previous, current) => {
+                return this.getHigherSeverityBulletinLevel(previous, current);
+            });
+            if (mostSevere.bulletin) {
+                return mostSevere;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Helper method to determine which bulletin has higher severity.
+     * Uses numeric mapping for severity comparison.
+     */
+    private getHigherSeverityBulletinLevel(left: BulletinEntity, right: BulletinEntity): BulletinEntity {
+        const bulletinSeverityMap: { [key: string]: number } = {
+            TRACE: 0,
+            DEBUG: 1,
+            INFO: 2,
+            WARNING: 3,
+            ERROR: 4
+        };
+        let mappedLeft = 0;
+        let mappedRight = 0;
+        if (left.bulletin) {
+            mappedLeft = bulletinSeverityMap[left.bulletin.level.toUpperCase()] || 0;
+        }
+        if (right.bulletin) {
+            mappedRight = bulletinSeverityMap[right.bulletin.level.toUpperCase()] || 0;
+        }
+
+        return mappedLeft >= mappedRight ? left : right;
+    }
+
+    /**
+     * Returns the appropriate CSS class for bulletin severity-based styling.
+     * @param bulletins Array of bulletin entities
+     * @returns CSS class name for severity-based styling
+     */
+    public getBulletinSeverityClass(bulletins: BulletinEntity[]): string {
+        const mostSevere = this.getMostSevereBulletin(bulletins);
+        if (!mostSevere) {
+            return 'tertiary-color';
+        }
+
+        switch (mostSevere.bulletin.level.toLowerCase()) {
+            case 'error':
+                return 'error-color';
+            case 'warn':
+            case 'warning':
+                return 'caution-color';
+            case 'info':
+            case 'debug':
+            case 'trace':
+            default:
+                return 'success-color-default';
+        }
     }
 }

@@ -38,6 +38,7 @@ import com.google.cloud.bigquery.storage.v1.ProtoSchema;
 import com.google.cloud.bigquery.storage.v1.ProtoSchemaConverter;
 import com.google.cloud.bigquery.storage.v1.StorageError;
 import com.google.cloud.bigquery.storage.v1.StreamWriter;
+import com.google.cloud.bigquery.storage.v1.TableFieldSchema;
 import com.google.cloud.bigquery.storage.v1.TableName;
 import com.google.cloud.bigquery.storage.v1.TableSchema;
 import com.google.cloud.bigquery.storage.v1.WriteStream;
@@ -58,6 +59,7 @@ import org.apache.nifi.components.AllowableValue;
 import org.apache.nifi.components.PropertyDescriptor;
 import org.apache.nifi.expression.ExpressionLanguageScope;
 import org.apache.nifi.flowfile.FlowFile;
+import org.apache.nifi.migration.PropertyConfiguration;
 import org.apache.nifi.processor.ProcessContext;
 import org.apache.nifi.processor.ProcessSession;
 import org.apache.nifi.processor.exception.ProcessException;
@@ -76,6 +78,7 @@ import java.net.Proxy;
 import java.sql.Date;
 import java.sql.Time;
 import java.sql.Timestamp;
+import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -94,7 +97,7 @@ import java.util.concurrent.atomic.AtomicReference;
     "are skipped. Exactly once delivery semantics are achieved via stream offsets.")
 @InputRequirement(InputRequirement.Requirement.INPUT_REQUIRED)
 @WritesAttributes({
-    @WritesAttribute(attribute = BigQueryAttributes.JOB_NB_RECORDS_ATTR, description = BigQueryAttributes.JOB_NB_RECORDS_DESC)
+    @WritesAttribute(attribute = PutBigQuery.JOB_NB_RECORDS_ATTR, description = "Number of records successfully inserted")
 })
 public class PutBigQuery extends AbstractBigQueryProcessor {
 
@@ -102,11 +105,11 @@ public class PutBigQuery extends AbstractBigQueryProcessor {
     static final String BATCH = "BATCH";
     static final AllowableValue STREAM_TYPE = new AllowableValue(STREAM, STREAM, "Use streaming record handling strategy");
     static final AllowableValue BATCH_TYPE = new AllowableValue(BATCH, BATCH, "Use batching record handling strategy");
+    static final String JOB_NB_RECORDS_ATTR = "bq.records.count";
 
-    private static final String APPEND_RECORD_COUNT_NAME = "bq.append.record.count";
     private static final String APPEND_RECORD_COUNT_DESC = "The number of records to be appended to the write stream at once. Applicable for both batch and stream types";
-    private static final String TRANSFER_TYPE_NAME = "bq.transfer.type";
     private static final String TRANSFER_TYPE_DESC = "Defines the preferred transfer type streaming or batching";
+    private static final String SKIP_INVALID_ROWS_ATTR = "Skip Invalid Rows";
 
     private static final List<Status.Code> RETRYABLE_ERROR_CODES = Arrays.asList(Status.Code.INTERNAL, Status.Code.ABORTED, Status.Code.CANCELLED);
 
@@ -126,8 +129,7 @@ public class PutBigQuery extends AbstractBigQueryProcessor {
         .build();
 
     public static final PropertyDescriptor BIGQUERY_API_ENDPOINT = new PropertyDescriptor.Builder()
-        .name("bigquery-api-endpoint")
-        .displayName("BigQuery API Endpoint")
+        .name("BigQuery API Endpoint")
         .description("Can be used to override the default BigQuery endpoint. Default is "
                 + BigQueryWriteStubSettings.getDefaultEndpoint() + ". "
                 + "Format must be hostname:port.")
@@ -138,8 +140,7 @@ public class PutBigQuery extends AbstractBigQueryProcessor {
         .build();
 
     static final PropertyDescriptor TRANSFER_TYPE = new PropertyDescriptor.Builder()
-        .name(TRANSFER_TYPE_NAME)
-        .displayName("Transfer Type")
+        .name("Transfer Type")
         .description(TRANSFER_TYPE_DESC)
         .required(true)
         .defaultValue(STREAM_TYPE.getValue())
@@ -147,8 +148,7 @@ public class PutBigQuery extends AbstractBigQueryProcessor {
         .build();
 
     static final PropertyDescriptor APPEND_RECORD_COUNT = new PropertyDescriptor.Builder()
-        .name(APPEND_RECORD_COUNT_NAME)
-        .displayName("Append Record Count")
+        .name("Append Record Count")
         .description(APPEND_RECORD_COUNT_DESC)
         .required(true)
         .defaultValue("20")
@@ -156,17 +156,16 @@ public class PutBigQuery extends AbstractBigQueryProcessor {
         .build();
 
     public static final PropertyDescriptor RECORD_READER = new PropertyDescriptor.Builder()
-        .name(BigQueryAttributes.RECORD_READER_ATTR)
-        .displayName("Record Reader")
-        .description(BigQueryAttributes.RECORD_READER_DESC)
+        .name("Record Reader")
+        .description("Specifies the Controller Service to use for parsing incoming data.")
         .identifiesControllerService(RecordReaderFactory.class)
         .required(true)
         .build();
 
     public static final PropertyDescriptor SKIP_INVALID_ROWS = new PropertyDescriptor.Builder()
-        .name(BigQueryAttributes.SKIP_INVALID_ROWS_ATTR)
-        .displayName("Skip Invalid Rows")
-        .description(BigQueryAttributes.SKIP_INVALID_ROWS_DESC)
+        .name(SKIP_INVALID_ROWS_ATTR)
+        .description("Sets whether to insert all valid rows of a request, even if invalid "
+                + "rows exist. If not set the entire insert request will fail if it contains an invalid row.")
         .required(true)
         .addValidator(StandardValidators.BOOLEAN_VALIDATOR)
         .expressionLanguageSupported(ExpressionLanguageScope.FLOWFILE_ATTRIBUTES)
@@ -244,12 +243,22 @@ public class PutBigQuery extends AbstractBigQueryProcessor {
                     RecordReader reader = readerFactory.createRecordReader(flowFile, in, getLogger())) {
                 recordNumWritten = writeRecordsToStream(reader, protoDescriptor, skipInvalidRows, tableSchema);
             }
-            flowFile = session.putAttribute(flowFile, BigQueryAttributes.JOB_NB_RECORDS_ATTR, Integer.toString(recordNumWritten));
+            flowFile = session.putAttribute(flowFile, JOB_NB_RECORDS_ATTR, Integer.toString(recordNumWritten));
         } catch (Exception e) {
             error.set(e);
         } finally {
             finishProcessing(session, flowFile, streamWriter, writeStream.getName(), tableName.toString());
         }
+    }
+
+    @Override
+    public void migrateProperties(PropertyConfiguration config) {
+        super.migrateProperties(config);
+        config.renameProperty("bigquery-api-endpoint", BIGQUERY_API_ENDPOINT.getName());
+        config.renameProperty("bq.transfer.type", TRANSFER_TYPE.getName());
+        config.renameProperty("bq.append.record.count", APPEND_RECORD_COUNT.getName());
+        config.renameProperty("bq.record.reader", RECORD_READER.getName());
+        config.renameProperty("bq.skip.invalid.rows", SKIP_INVALID_ROWS.getName());
     }
 
     private int writeRecordsToStream(RecordReader reader, Descriptors.Descriptor descriptor, boolean skipInvalidRows, TableSchema tableSchema) throws Exception {
@@ -281,7 +290,7 @@ public class PutBigQuery extends AbstractBigQueryProcessor {
     }
 
     private DynamicMessage recordToProtoMessage(Record record, Descriptors.Descriptor descriptor, boolean skipInvalidRows, TableSchema tableSchema) {
-        Map<String, Object> valueMap = convertMapRecord(record.toMap());
+        Map<String, Object> valueMap = convertMapRecord(record.toMap(), tableSchema.getFieldsList());
         DynamicMessage message = null;
         try {
             message = ProtoUtils.createMessage(descriptor, valueMap, tableSchema);
@@ -319,7 +328,7 @@ public class PutBigQuery extends AbstractBigQueryProcessor {
         // Verify that no error occurred in the stream.
         if (error.get() != null) {
             getLogger().error("Stream processing failed", error.get());
-            flowFile = session.putAttribute(flowFile, BigQueryAttributes.JOB_NB_RECORDS_ATTR, isBatch() ? "0" : String.valueOf(appendSuccessCount.get() * recordBatchCount));
+            flowFile = session.putAttribute(flowFile, JOB_NB_RECORDS_ATTR, isBatch() ? "0" : String.valueOf(appendSuccessCount.get() * recordBatchCount));
             session.penalize(flowFile);
             session.transfer(flowFile, REL_FAILURE);
             error.set(null); // set error to null for next execution
@@ -359,12 +368,14 @@ public class PutBigQuery extends AbstractBigQueryProcessor {
             this.appendContext = appendContext;
         }
 
+        @Override
         public void onSuccess(AppendRowsResponse response) {
             getLogger().info("Append success with offset: {}", appendContext.getOffset());
             appendSuccessCount.incrementAndGet();
             inflightRequestCount.arriveAndDeregister();
         }
 
+        @Override
         public void onFailure(Throwable throwable) {
             // If the state is INTERNAL, CANCELLED, or ABORTED, you can retry. For more information,
             // see: https://grpc.github.io/grpc-java/javadoc/io/grpc/StatusRuntimeException.html
@@ -381,10 +392,25 @@ public class PutBigQuery extends AbstractBigQueryProcessor {
             }
 
             error.compareAndSet(null, Optional.ofNullable(Exceptions.toStorageException(throwable))
-                .map(RuntimeException.class::cast)
-                .orElse(new RuntimeException(throwable)));
+                    .map(RuntimeException.class::cast)
+                    .orElse(new RuntimeException(throwable)));
 
-            getLogger().error("Failure during appending data", throwable);
+            // Provide detailed row-level error logging when available from the client
+            if (throwable instanceof Exceptions.AppendSerializationError) {
+                try {
+                    final Exceptions.AppendSerializationError serializationError = (Exceptions.AppendSerializationError) throwable;
+                    final Map<Integer, String> rowErrors = serializationError.getRowIndexToErrorMessage();
+                    if (rowErrors != null && !rowErrors.isEmpty()) {
+                        final String firstError = rowErrors.values().iterator().next();
+                        getLogger().error("Failure during appending data. First error: %s".formatted(firstError), throwable);
+                    }
+                } catch (Throwable logError) {
+                    getLogger().error("Failure during appending data", throwable);
+                }
+            } else {
+                getLogger().error("Failure during appending data", throwable);
+            }
+
             inflightRequestCount.arriveAndDeregister();
         }
     }
@@ -480,39 +506,109 @@ public class PutBigQuery extends AbstractBigQueryProcessor {
         }
     }
 
-    private static Map<String, Object> convertMapRecord(Map<String, Object> map) {
+    private static Map<String, Object> convertMapRecord(Map<String, Object> map, List<TableFieldSchema> tableFields) {
         Map<String, Object> result = new HashMap<>();
-        for (String key : map.keySet()) {
-            Object obj = map.get(key);
-            // BigQuery is not case sensitive on the column names but the protobuf message
-            // expect all column names to be lower case
-            key = key.toLowerCase();
-            if (obj instanceof MapRecord) {
-                result.put(key, convertMapRecord(((MapRecord) obj).toMap()));
-            } else if (obj instanceof Object[]
-                && ((Object[]) obj).length > 0
-                && ((Object[]) obj)[0] instanceof MapRecord) {
-                List<Map<String, Object>> lmapr = new ArrayList<>();
-                for (Object mapr : ((Object[]) obj)) {
-                    lmapr.add(convertMapRecord(((MapRecord) mapr).toMap()));
+        for (String rawKey : map.keySet()) {
+            String key = rawKey.toLowerCase();
+            Object obj = map.get(rawKey);
+
+            TableFieldSchema fieldSchema = findFieldSchema(tableFields, key);
+            if (fieldSchema != null && fieldSchema.getType() == TableFieldSchema.Type.STRUCT) {
+                // Nested RECORD type
+                if (obj instanceof MapRecord) {
+                    result.put(key, convertMapRecord(((MapRecord) obj).toMap(), fieldSchema.getFieldsList()));
+                    continue;
+                } else if (obj instanceof Object[] && ((Object[]) obj).length > 0 && ((Object[]) obj)[0] instanceof MapRecord) {
+                    List<Map<String, Object>> list = new ArrayList<>();
+                    for (Object item : (Object[]) obj) {
+                        list.add(convertMapRecord(((MapRecord) item).toMap(), fieldSchema.getFieldsList()));
+                    }
+                    result.put(key, list);
+                    continue;
                 }
-                result.put(key, lmapr);
-            } else if (obj instanceof Timestamp) {
-                result.put(key, ((Timestamp) obj).getTime() * 1000);
-            } else if (obj instanceof Time) {
-                LocalTime time = ((Time) obj).toLocalTime();
-                org.threeten.bp.LocalTime localTime = org.threeten.bp.LocalTime.of(
-                    time.getHour(),
-                    time.getMinute(),
-                    time.getSecond());
-                result.put(key, CivilTimeEncoder.encodePacked64TimeMicros(localTime));
-            } else if (obj instanceof Date) {
-                result.put(key, (int) ((Date) obj).toLocalDate().toEpochDay());
+            } else if (obj instanceof Object[] && ((Object[]) obj).length > 0 && ((Object[]) obj)[0] instanceof MapRecord) {
+                // Repeated RECORDs without proper schema match; best effort
+                List<Map<String, Object>> list = new ArrayList<>();
+                for (Object item : (Object[]) obj) {
+                    list.add(convertMapRecord(((MapRecord) item).toMap(), fieldSchema != null ? fieldSchema.getFieldsList() : List.of()));
+                }
+                result.put(key, list);
+                continue;
+            }
+
+            // Scalar conversions guided by schema when available
+            if (fieldSchema != null) {
+                switch (fieldSchema.getType()) {
+                    case TIMESTAMP:
+                        if (obj instanceof Timestamp) {
+                            result.put(key, ((Timestamp) obj).getTime() * 1000);
+                            break;
+                        }
+                        // fall through to default if not Timestamp
+                    case TIME:
+                        if (obj instanceof Time) {
+                            LocalTime time = ((Time) obj).toLocalTime();
+                            org.threeten.bp.LocalTime localTime = org.threeten.bp.LocalTime.of(
+                                time.getHour(),
+                                time.getMinute(),
+                                time.getSecond());
+                            result.put(key, CivilTimeEncoder.encodePacked64TimeMicros(localTime));
+                            break;
+                        }
+                        // fall through
+                    case DATE:
+                        if (obj instanceof Date) {
+                            result.put(key, (int) ((Date) obj).toLocalDate().toEpochDay());
+                            break;
+                        }
+                        // fall through
+                    case DATETIME:
+                        if (obj instanceof Timestamp) {
+                            LocalDateTime ldt = ((Timestamp) obj).toLocalDateTime();
+                            org.threeten.bp.LocalDateTime civil = org.threeten.bp.LocalDateTime.of(
+                                    ldt.getYear(),
+                                    ldt.getMonthValue(),
+                                    ldt.getDayOfMonth(),
+                                    ldt.getHour(),
+                                    ldt.getMinute(),
+                                    ldt.getSecond(),
+                                    ldt.getNano());
+                            result.put(key, CivilTimeEncoder.encodePacked64DatetimeMicros(civil));
+                            break;
+                        }
+                        // fall through
+                    default:
+                        result.put(key, obj);
+                        break;
+                }
             } else {
-                result.put(key, obj);
+                // No schema available for field; apply basic conversions for JDBC temporal types
+                if (obj instanceof Timestamp) {
+                    result.put(key, ((Timestamp) obj).getTime() * 1000);
+                } else if (obj instanceof Time) {
+                    LocalTime time = ((Time) obj).toLocalTime();
+                    org.threeten.bp.LocalTime localTime = org.threeten.bp.LocalTime.of(
+                            time.getHour(),
+                            time.getMinute(),
+                            time.getSecond());
+                    result.put(key, CivilTimeEncoder.encodePacked64TimeMicros(localTime));
+                } else if (obj instanceof Date) {
+                    result.put(key, (int) ((Date) obj).toLocalDate().toEpochDay());
+                } else {
+                    result.put(key, obj);
+                }
             }
         }
 
         return result;
+    }
+
+    private static TableFieldSchema findFieldSchema(List<TableFieldSchema> fields, String keyLower) {
+        for (TableFieldSchema f : fields) {
+            if (f.getName().equalsIgnoreCase(keyLower)) {
+                return f;
+            }
+        }
+        return null;
     }
 }

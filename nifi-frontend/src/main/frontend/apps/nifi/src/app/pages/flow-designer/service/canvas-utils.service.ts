@@ -49,6 +49,10 @@ import { selectScale } from '../state/transform/transform.selectors';
     providedIn: 'root'
 })
 export class CanvasUtils {
+    private store = inject<Store<CanvasState>>(Store);
+    private nifiCommon = inject(NiFiCommon);
+    private overlay = inject(Overlay);
+
     private static readonly TWO_PI: number = 2 * Math.PI;
 
     private destroyRef = inject(DestroyRef);
@@ -68,11 +72,7 @@ export class CanvasUtils {
 
     private readonly humanizeDuration: Humanizer;
 
-    constructor(
-        private store: Store<CanvasState>,
-        private nifiCommon: NiFiCommon,
-        private overlay: Overlay
-    ) {
+    constructor() {
         this.humanizeDuration = humanizer();
 
         this.store
@@ -1279,41 +1279,13 @@ export class CanvasUtils {
         selection.on('mouseenter', null).on('mouseleave', null);
     }
 
-    private getHigherSeverityBulletinLevel(left: BulletinEntity, right: BulletinEntity): BulletinEntity {
-        const bulletinSeverityMap: { [key: string]: number } = {
-            TRACE: 0,
-            DEBUG: 1,
-            INFO: 2,
-            WARNING: 3,
-            ERROR: 4
-        };
-        let mappedLeft = 0;
-        let mappedRight = 0;
-        if (left.bulletin) {
-            mappedLeft = bulletinSeverityMap[left.bulletin.level.toUpperCase()] || 0;
-        }
-        if (right.bulletin) {
-            mappedRight = bulletinSeverityMap[right.bulletin.level.toUpperCase()] || 0;
-        }
-        return mappedLeft >= mappedRight ? left : right;
-    }
-
-    public getMostSevereBulletin(bulletins: BulletinEntity[]): BulletinEntity | null {
-        if (bulletins && bulletins.length > 0) {
-            const mostSevere = bulletins.reduce((previous, current) => {
-                return this.getHigherSeverityBulletinLevel(previous, current);
-            });
-            if (mostSevere.bulletin) {
-                return mostSevere;
-            }
-        }
-        return null;
-    }
-
     private resetBulletin(selection: any) {
         // reset the bulletin icon/background
         selection.select('text.bulletin-icon').style('visibility', 'hidden');
         selection.select('rect.bulletin-background').style('visibility', 'hidden');
+
+        // remove the has-bulletins class
+        selection.classed('has-bulletins', false);
 
         // reset the canvas tooltip
         this.resetCanvasTooltip(selection);
@@ -1335,7 +1307,7 @@ export class CanvasUtils {
             this.resetBulletin(selection);
         } else {
             // determine the most severe of the bulletins
-            const mostSevere = this.getMostSevereBulletin(filteredBulletins);
+            const mostSevere = this.nifiCommon.getMostSevereBulletin(filteredBulletins);
 
             // add the proper class to indicate the most severe bulletin
             if (mostSevere) {
@@ -1346,6 +1318,9 @@ export class CanvasUtils {
                 const bulletinBackground: any = selection
                     .select('rect.bulletin-background')
                     .style('visibility', 'visible');
+
+                // add the has-bulletins class to indicate this component has bulletins
+                selection.classed('has-bulletins', true);
 
                 // reset any level-specifying classes that might have been there before
                 bulletinIcon
@@ -1955,7 +1930,15 @@ export class CanvasUtils {
         let stoppable = false;
         const selectionData = selection.datum();
         if (this.isProcessor(selection) || this.isInputPort(selection) || this.isOutputPort(selection)) {
-            stoppable = selectionData.status.aggregateSnapshot.runStatus === 'Running';
+            const runStatus = selectionData.status.aggregateSnapshot.runStatus;
+
+            // For processors, also check if physical state is Starting when runStatus is Invalid
+            if (this.isProcessor(selection) && runStatus === 'Invalid') {
+                const physicalState = selectionData.physicalState;
+                stoppable = physicalState === 'STARTING';
+            } else {
+                stoppable = runStatus === 'Running';
+            }
         }
         return stoppable;
     }
@@ -2090,6 +2073,10 @@ export class CanvasUtils {
      * @return {boolean}                       Whether the selection supports starting flow versioning
      */
     public supportsStartFlowVersioning(selection: d3.Selection<any, any, any, any>): boolean {
+        if (!this.canVersionFlows()) {
+            return false;
+        }
+
         if (!this.supportsFlowVersioning(selection)) {
             return false;
         }
@@ -2116,10 +2103,6 @@ export class CanvasUtils {
      * @return {boolean}                       Whether the selection supports flow versioning
      */
     public supportsFlowVersioning(selection: d3.Selection<any, any, any, any>): boolean {
-        if (!this.canVersionFlows()) {
-            return false;
-        }
-
         if (selection.empty()) {
             // prevent versioning of the root group
             if (!this.getParentProcessGroupId()) {
@@ -2144,6 +2127,10 @@ export class CanvasUtils {
      * @return {boolean}                       Whether the selection supports commit.
      */
     public supportsCommitFlowVersion(selection: d3.Selection<any, any, any, any>): boolean {
+        if (!this.canVersionFlows()) {
+            return false;
+        }
+
         const versionControlInformation = this.getFlowVersionControlInformation(selection);
 
         // check the selection for version control information
@@ -2157,6 +2144,10 @@ export class CanvasUtils {
      * @return {boolean}                       Whether the selection supports force commit.
      */
     public supportsForceCommitFlowVersion(selection: d3.Selection<any, any, any, any>): boolean {
+        if (!this.canVersionFlows()) {
+            return false;
+        }
+
         const versionControlInformation = this.getFlowVersionControlInformation(selection);
 
         // check the selection for version control information
@@ -2170,6 +2161,10 @@ export class CanvasUtils {
      * @return {boolean}                       Whether the selection has local changes.
      */
     public hasLocalChanges(selection: d3.Selection<any, any, any, any>): boolean {
+        if (!this.canVersionFlows()) {
+            return false;
+        }
+
         const versionControlInformation = this.getFlowVersionControlInformation(selection);
 
         // check the selection for version control information
@@ -2187,6 +2182,10 @@ export class CanvasUtils {
      * @return {boolean}                       Whether the selection supports change flow version.
      */
     public supportsChangeFlowVersion(selection: d3.Selection<any, any, any, any>): boolean {
+        if (!this.canVersionFlows()) {
+            return false;
+        }
+
         const versionControlInformation = this.getFlowVersionControlInformation(selection);
 
         return (

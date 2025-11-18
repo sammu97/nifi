@@ -15,8 +15,7 @@
  * limitations under the License.
  */
 
-import { Component, EventEmitter, Input, OnDestroy, Output } from '@angular/core';
-
+import { Component, EventEmitter, Input, OnDestroy, Output, inject } from '@angular/core';
 import { FieldDescriptor } from '../../../../state/status-history';
 import * as d3 from 'd3';
 import { NiFiCommon } from '@nifi/shared';
@@ -31,6 +30,8 @@ import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
     styleUrls: ['./status-history-chart.component.scss']
 })
 export class StatusHistoryChart implements OnDestroy {
+    private nifiCommon = inject(NiFiCommon);
+
     private _instances!: Instance[];
     private _selectedDescriptor: FieldDescriptor | null = null;
     private _visibleInstances: VisibleInstances = {};
@@ -80,7 +81,7 @@ export class StatusHistoryChart implements OnDestroy {
 
     nodes: any[] = [];
 
-    constructor(private nifiCommon: NiFiCommon) {
+    constructor() {
         // don't need constantly fire the stats changing as a result of brush drag/move
         this.nodeStats$.pipe(debounceTime(20), takeUntilDestroyed()).subscribe((stats: Stats) => {
             this.nodeStats.next(stats);
@@ -100,6 +101,28 @@ export class StatusHistoryChart implements OnDestroy {
             // will also be used for average values
             if (d % 1 === 0) {
                 return this.nifiCommon.formatInteger(d);
+            } else {
+                return this.nifiCommon.formatFloat(d);
+            }
+        },
+        DATA_SIZE: (d: number) => {
+            return this.nifiCommon.formatDataSize(d);
+        },
+        FRACTION: (d: number) => {
+            return this.nifiCommon.formatFloat(d / 1000000);
+        }
+    };
+
+    // Formatters for y-axis use with compact notation for large numbers
+    private yAxisFormatters: any = {
+        DURATION: (d: number) => {
+            return this.nifiCommon.formatDuration(d);
+        },
+        COUNT: (d: number) => {
+            // need to handle floating point number since this formatter
+            // will also be used for average values
+            if (d % 1 === 0) {
+                return this.nifiCommon.formatInteger(d, true); // Enable compact notation for y-axis
             } else {
                 return this.nifiCommon.formatFloat(d);
             }
@@ -188,7 +211,7 @@ export class StatusHistoryChart implements OnDestroy {
 
         // define the y axis
         const y = d3.scaleLinear().range([height, 0]);
-        const yAxis: any = d3.axisLeft(y).tickFormat(this.formatters[selectedDescriptor.formatter]);
+        const yAxis: any = d3.axisLeft(y).tickFormat(this.yAxisFormatters[selectedDescriptor.formatter]);
 
         // status line
         const line = d3
@@ -349,7 +372,7 @@ export class StatusHistoryChart implements OnDestroy {
         const yControlAxis = d3
             .axisLeft(yControl)
             .tickValues(y.domain())
-            .tickFormat(this.formatters[selectedDescriptor.formatter]);
+            .tickFormat(this.yAxisFormatters[selectedDescriptor.formatter]);
 
         // status line
         const controlLine = d3

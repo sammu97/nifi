@@ -18,14 +18,21 @@
 <h2 mat-dialog-title>Override Policy</h2>
 <form class="override-policy-form" [formGroup]="overridePolicyForm">
     <mat-dialog-content>
-        <div class="mb-5">Do you want to override with a copy of the inherited policy or an empty policy?</div>
-        <mat-radio-group formControlName="override">
-            <mat-radio-button value="copy">Copy</mat-radio-button>
-            <mat-radio-button value="empty">Empty</mat-radio-button>
-        </mat-radio-group>
+        <div class="pb-1">
+            <div class="mb-5">Do you want to override with a copy of the inherited policy or an empty policy?</div>
+            <mat-radio-group formControlName="override">
+                <mat-radio-button value="copy">Copy</mat-radio-button>
+                <mat-radio-button value="empty">Empty</mat-radio-button>
+            </mat-radio-group>
+        </div>
     </mat-dialog-content>
     <mat-dialog-actions align="end">
         <button mat-button mat-dialog-close>Cancel</button>
-        <button mat-flat-button [disabled]="overridePolicyForm.invalid" (click)="overrideClicked()">Override</button>
+        <button
+            mat-flat-button
+            [disabled]="overridePolicyForm.invalid || overridePolicyForm.pending"
+            (click)="overrideClicked()">
+            Override
+        </button>
     </mat-dialog-actions>
 </form>

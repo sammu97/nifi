@@ -15,10 +15,11 @@
  * limitations under the License.
  */
 
-import { Injectable } from '@angular/core';
+import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
 import { HttpClient, HttpParams } from '@angular/common/http';
 import {
+    ClearBulletinsForGroupRequest,
     ComponentRunStatusRequest,
     ControllerServiceStateRequest,
     CreateComponentRequest,
@@ -55,18 +56,16 @@ import {
 import { Client } from '../../../service/client.service';
 import { ComponentType, NiFiCommon } from '@nifi/shared';
 import { ClusterConnectionService } from '../../../service/cluster-connection.service';
-import { PropertyDescriptorRetriever } from '../../../state/shared';
+import { ClearBulletinsRequest, PropertyDescriptorRetriever } from '../../../state/shared';
 
 @Injectable({ providedIn: 'root' })
 export class FlowService implements PropertyDescriptorRetriever {
-    private static readonly API: string = '../nifi-api';
+    private httpClient = inject(HttpClient);
+    private client = inject(Client);
+    private nifiCommon = inject(NiFiCommon);
+    private clusterConnectionService = inject(ClusterConnectionService);
 
-    constructor(
-        private httpClient: HttpClient,
-        private client: Client,
-        private nifiCommon: NiFiCommon,
-        private clusterConnectionService: ClusterConnectionService
-    ) {}
+    private static readonly API: string = '../nifi-api';
 
     getFlow(processGroupId = 'root'): Observable<any> {
         const uiOnly: any = { uiOnly: true };
@@ -134,7 +133,7 @@ export class FlowService implements PropertyDescriptorRetriever {
     }
 
     goToRemoteProcessGroup(goToRemoteProcessGroupRequest: GoToRemoteProcessGroupRequest) {
-        window.open(encodeURI(goToRemoteProcessGroupRequest.uri));
+        window.open(encodeURI(goToRemoteProcessGroupRequest.uri), '_blank', 'noreferrer');
     }
 
     createProcessor(processGroupId = 'root', createProcessor: CreateProcessorRequest): Observable<any> {
@@ -472,7 +471,33 @@ export class FlowService implements PropertyDescriptorRetriever {
 
     downloadFlow(downloadFlowRequest: DownloadFlowRequest): void {
         window.open(
-            `${FlowService.API}/process-groups/${downloadFlowRequest.processGroupId}/download?includeReferencedServices=${downloadFlowRequest.includeReferencedServices}`
+            `${FlowService.API}/process-groups/${downloadFlowRequest.processGroupId}/download?includeReferencedServices=${downloadFlowRequest.includeReferencedServices}`,
+            '_blank',
+            'noreferrer'
+        );
+    }
+
+    /*
+        Clear Bulletins
+    */
+
+    clearBulletinForComponent(request: ClearBulletinsRequest): Observable<any> {
+        const payload = {
+            fromTimestamp: request.fromTimestamp
+        };
+
+        return this.httpClient.post(`${this.nifiCommon.stripProtocol(request.uri)}/bulletins/clear-requests`, payload);
+    }
+
+    clearBulletinsForProcessGroup(request: ClearBulletinsForGroupRequest): Observable<any> {
+        const payload: any = {
+            id: request.processGroupId,
+            fromTimestamp: request.fromTimestamp
+        };
+
+        return this.httpClient.post(
+            `${FlowService.API}/flow/process-groups/${request.processGroupId}/bulletins/clear-requests`,
+            payload
         );
     }
 }

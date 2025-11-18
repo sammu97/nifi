@@ -53,41 +53,25 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 
-@Tags({"excel", "spreadsheet", "xlsx", "parse", "record", "row", "reader", "values", "cell"})
+@Tags({"excel", "spreadsheet", "xls", "xlsx", "parse", "record", "row", "reader", "values", "cell"})
 @CapabilityDescription("Parses a Microsoft Excel document returning each row in each sheet as a separate record. "
         + "This reader allows for inferring a schema from all the required sheets "
         + "or providing an explicit schema for interpreting the values."
         + "See Controller Service's Usage for further documentation. "
-        + "This reader is currently only capable of processing .xlsx "
-        + "(XSSF 2007 OOXML file format) Excel documents and not older .xls (HSSF '97(-2007) file format) documents.")
+        + "This reader is capable of processing both password and non password protected .xlsx (XSSF 2007 OOXML file format) "
+        + "and older .xls (HSSF '97(-2007) file format) Excel documents.")
 public class ExcelReader extends SchemaRegistryService implements RecordReaderFactory {
 
-    public static final PropertyDescriptor REQUIRED_SHEETS = new PropertyDescriptor
-            .Builder().name("Required Sheets")
-            .displayName("Required Sheets")
-            .description("Comma-separated list of Excel document sheet names whose rows should be extracted from the excel document. If this property" +
-                    " is left blank then all the rows from all the sheets will be extracted from the Excel document. The list of names is case sensitive. Any sheets not" +
-                    " specified in this value will be ignored. An exception will be thrown if a specified sheet(s) are not found.")
-            .required(false)
-            .expressionLanguageSupported(ExpressionLanguageScope.FLOWFILE_ATTRIBUTES)
-            .addValidator(StandardValidators.NON_EMPTY_VALIDATOR)
-            .build();
-
-    public static final PropertyDescriptor STARTING_ROW = new PropertyDescriptor
-            .Builder().name("Starting Row")
-            .displayName("Starting Row")
-            .description("The row number of the first row to start processing (One based)."
-                    + " Use this to skip over rows of data at the top of a worksheet that are not part of the dataset."
-                    + " When using the '" + ExcelHeaderSchemaStrategy.USE_STARTING_ROW.getValue() + "' strategy this should be the column header row.")
+    public static final PropertyDescriptor INPUT_FILE_TYPE = new PropertyDescriptor
+            .Builder().name("Input File Type")
+            .description("Specifies type of Excel input file.")
             .required(true)
-            .defaultValue("1")
-            .expressionLanguageSupported(ExpressionLanguageScope.FLOWFILE_ATTRIBUTES)
-            .addValidator(StandardValidators.POSITIVE_INTEGER_VALIDATOR)
+            .allowableValues(InputFileType.class)
+            .defaultValue(InputFileType.XLSX)
             .build();
 
     public static final PropertyDescriptor PROTECTION_TYPE = new PropertyDescriptor
             .Builder().name("Protection Type")
-            .displayName("Protection Type")
             .description("Specifies whether an Excel spreadsheet is protected by a password or not.")
             .required(true)
             .allowableValues(ProtectionType.class)
@@ -96,12 +80,42 @@ public class ExcelReader extends SchemaRegistryService implements RecordReaderFa
 
     public static final PropertyDescriptor PASSWORD = new PropertyDescriptor
             .Builder().name("Password")
-            .displayName("Password")
             .description("The password for a password protected Excel spreadsheet")
             .required(true)
             .sensitive(true)
             .addValidator(StandardValidators.NON_BLANK_VALIDATOR)
             .dependsOn(PROTECTION_TYPE, ProtectionType.PASSWORD)
+            .build();
+
+    public static final PropertyDescriptor STARTING_ROW = new PropertyDescriptor
+            .Builder().name("Starting Row")
+            .description("The row number of the first row to start processing (One based)."
+                    + " Use this to skip over rows of data at the top of a worksheet that are not part of the dataset."
+                    + " When using the '" + ExcelStartingRowSchemaInference.USE_STARTING_ROW.getValue() + "' strategy this should be the column header row.")
+            .required(true)
+            .defaultValue("1")
+            .expressionLanguageSupported(ExpressionLanguageScope.FLOWFILE_ATTRIBUTES)
+            .addValidator(StandardValidators.POSITIVE_INTEGER_VALIDATOR)
+            .build();
+
+    public static final PropertyDescriptor ROW_EVALUATION_STRATEGY = new PropertyDescriptor
+            .Builder().name("Row Evaluation Strategy")
+            .description("A strategy to select how many rows after the starting row to use for determining the schema.")
+            .required(true)
+            .allowableValues(RowEvaluationStrategy.class)
+            .defaultValue(RowEvaluationStrategy.STANDARD)
+            .dependsOn(SchemaAccessUtils.SCHEMA_ACCESS_STRATEGY, ExcelStartingRowSchemaInference.USE_STARTING_ROW)
+            .addValidator(StandardValidators.NON_BLANK_VALIDATOR)
+            .build();
+
+    public static final PropertyDescriptor REQUIRED_SHEETS = new PropertyDescriptor
+            .Builder().name("Required Sheets")
+            .description("Comma-separated list of Excel document sheet names whose rows should be extracted from the excel document. If this property" +
+                    " is left blank then all the rows from all the sheets will be extracted from the Excel document. The list of names is case sensitive. Any sheets not" +
+                    " specified in this value will be ignored. An exception will be thrown if a specified sheet(s) are not found.")
+            .required(false)
+            .expressionLanguageSupported(ExpressionLanguageScope.FLOWFILE_ATTRIBUTES)
+            .addValidator(StandardValidators.NON_EMPTY_VALIDATOR)
             .build();
 
     private volatile ConfigurationContext configurationContext;
@@ -128,6 +142,7 @@ public class ExcelReader extends SchemaRegistryService implements RecordReaderFa
         final List<String> requiredSheets = getRequiredSheets(variables);
         final int firstRow = getStartingRow(variables);
         final String password = configurationContext.getProperty(PASSWORD).getValue();
+        final InputFileType inputFileType = configurationContext.getProperty(INPUT_FILE_TYPE).asAllowableValue(InputFileType.class);
         final ExcelRecordReaderConfiguration configuration = new ExcelRecordReaderConfiguration.Builder()
                 .withDateFormat(dateFormat)
                 .withRequiredSheets(requiredSheets)
@@ -136,6 +151,7 @@ public class ExcelReader extends SchemaRegistryService implements RecordReaderFa
                 .withTimeFormat(timeFormat)
                 .withTimestampFormat(timestampFormat)
                 .withPassword(password)
+                .withInputFileType(inputFileType)
                 .build();
 
         return new ExcelRecordReader(configuration, in, logger);
@@ -144,10 +160,12 @@ public class ExcelReader extends SchemaRegistryService implements RecordReaderFa
     @Override
     protected List<PropertyDescriptor> getSupportedPropertyDescriptors() {
         final List<PropertyDescriptor> properties = new ArrayList<>(super.getSupportedPropertyDescriptors());
-        properties.add(STARTING_ROW);
-        properties.add(REQUIRED_SHEETS);
+        properties.add(INPUT_FILE_TYPE);
         properties.add(PROTECTION_TYPE);
         properties.add(PASSWORD);
+        properties.add(STARTING_ROW);
+        properties.add(ROW_EVALUATION_STRATEGY);
+        properties.add(REQUIRED_SHEETS);
         properties.add(DateTimeUtils.DATE_FORMAT);
         properties.add(DateTimeUtils.TIME_FORMAT);
         properties.add(DateTimeUtils.TIMESTAMP_FORMAT);
@@ -157,12 +175,18 @@ public class ExcelReader extends SchemaRegistryService implements RecordReaderFa
 
     @Override
     protected SchemaAccessStrategy getSchemaAccessStrategy(final String allowableValue, final SchemaRegistry schemaRegistry, final PropertyContext context) {
-        if (allowableValue.equalsIgnoreCase(ExcelHeaderSchemaStrategy.USE_STARTING_ROW.getValue())) {
-            return new ExcelHeaderSchemaStrategy(context, getLogger(), new TimeValueInference(dateFormat, timeFormat, timestampFormat));
+        if (ExcelStartingRowSchemaInference.USE_STARTING_ROW.getValue().equals(allowableValue)) {
+            final RowEvaluationStrategy rowEvaluationStrategy =
+                    context.getProperty(ROW_EVALUATION_STRATEGY).asAllowableValue(RowEvaluationStrategy.class);
+            final int firstRow = context.getProperty(STARTING_ROW)
+                    .evaluateAttributeExpressions()
+                    .asInteger();
+            final SchemaInferenceEngine<Row> inference =
+                    new ExcelStartingRowSchemaInference(rowEvaluationStrategy, firstRow, createTimeValueInference());
+            return createInferSchemaAccessStrategy(context, inference);
         } else if (SchemaInferenceUtil.INFER_SCHEMA.getValue().equals(allowableValue)) {
-            final RecordSourceFactory<Row> sourceFactory = (variables, in) -> new ExcelRecordSource(in, context, variables, getLogger());
-            final SchemaInferenceEngine<Row> inference = new ExcelSchemaInference(new TimeValueInference(dateFormat, timeFormat, timestampFormat));
-            return new InferSchemaAccessStrategy<>(sourceFactory, inference, getLogger());
+            final SchemaInferenceEngine<Row> inference = new ExcelSchemaInference(createTimeValueInference());
+            return createInferSchemaAccessStrategy(context, inference);
         }
 
         return super.getSchemaAccessStrategy(allowableValue, schemaRegistry, context);
@@ -171,21 +195,21 @@ public class ExcelReader extends SchemaRegistryService implements RecordReaderFa
     @Override
     protected List<AllowableValue> getSchemaAccessStrategyValues() {
         final List<AllowableValue> allowableValues = new ArrayList<>(super.getSchemaAccessStrategyValues());
-        allowableValues.add(ExcelHeaderSchemaStrategy.USE_STARTING_ROW);
+        allowableValues.add(ExcelStartingRowSchemaInference.USE_STARTING_ROW);
         allowableValues.add(SchemaInferenceUtil.INFER_SCHEMA);
         return allowableValues;
     }
 
     @Override
     protected AllowableValue getDefaultSchemaAccessStrategy() {
-        return ExcelHeaderSchemaStrategy.USE_STARTING_ROW;
+        return ExcelStartingRowSchemaInference.USE_STARTING_ROW;
     }
 
     private int getStartingRow(final Map<String, String> variables) {
         int rawStartingRow = configurationContext.getProperty(STARTING_ROW).evaluateAttributeExpressions(variables).asInteger();
-        String schemaAccessStrategy = configurationContext.getProperty(SchemaAccessUtils.SCHEMA_ACCESS_STRATEGY).getValue();
+        final String schemaAccessStrategy = configurationContext.getProperty(SchemaAccessUtils.SCHEMA_ACCESS_STRATEGY).getValue();
 
-        if (ExcelHeaderSchemaStrategy.USE_STARTING_ROW.getValue().equals(schemaAccessStrategy)) {
+        if (ExcelStartingRowSchemaInference.USE_STARTING_ROW.getValue().equals(schemaAccessStrategy)) {
             rawStartingRow++;
         }
         return getZeroBasedIndex(rawStartingRow);
@@ -209,5 +233,14 @@ public class ExcelReader extends SchemaRegistryService implements RecordReaderFa
         }
 
         return Collections.emptyList();
+    }
+
+    private TimeValueInference createTimeValueInference() {
+        return new TimeValueInference(dateFormat, timeFormat, timestampFormat);
+    }
+
+    private InferSchemaAccessStrategy<Row> createInferSchemaAccessStrategy(final PropertyContext context, final SchemaInferenceEngine<Row> inference) {
+        final RecordSourceFactory<Row> sourceFactory = (variables, in) -> new ExcelRecordSource(in, context, variables, getLogger());
+        return new InferSchemaAccessStrategy<>(sourceFactory, inference, getLogger());
     }
 }

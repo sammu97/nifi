@@ -120,19 +120,13 @@ public class C2OperationState implements Serializable {
          * @return update state enumeration value.
          */
         public static OperationState fromOrdinal(int state) {
-            switch (state) {
-                case 0:
-                    return FULLY_APPLIED;
-                case 1:
-                    return PARTIALLY_APPLIED;
-                case 2:
-                    return OPERATION_NOT_UNDERSTOOD;
-                case 3:
-                    return NO_OPERATION;
-                case 4:
-                default:
-                    return NOT_APPLIED;
-            }
+            return switch (state) {
+                case 0 -> FULLY_APPLIED;
+                case 1 -> PARTIALLY_APPLIED;
+                case 2 -> OPERATION_NOT_UNDERSTOOD;
+                case 3 -> NO_OPERATION;
+                default -> NOT_APPLIED;
+            };
         }
 
         /**
@@ -144,19 +138,13 @@ public class C2OperationState implements Serializable {
          * @return predefined ordinal
          */
         public static int toOrdinal(OperationState state) {
-            switch (state) {
-                case FULLY_APPLIED:
-                    return 0;
-                case PARTIALLY_APPLIED:
-                    return 1;
-                case OPERATION_NOT_UNDERSTOOD:
-                    return 2;
-                case NO_OPERATION:
-                    return 3;
-                case NOT_APPLIED:
-                default:
-                    return 4;
-            }
+            return switch (state) {
+                case FULLY_APPLIED -> 0;
+                case PARTIALLY_APPLIED -> 1;
+                case OPERATION_NOT_UNDERSTOOD -> 2;
+                case NO_OPERATION -> 3;
+                default -> 4;
+            };
         }
     }
 

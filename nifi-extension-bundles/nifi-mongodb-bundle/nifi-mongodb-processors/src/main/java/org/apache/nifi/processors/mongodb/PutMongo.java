@@ -37,6 +37,7 @@ import org.apache.nifi.components.ValidationResult;
 import org.apache.nifi.expression.ExpressionLanguageScope;
 import org.apache.nifi.flowfile.FlowFile;
 import org.apache.nifi.logging.ComponentLog;
+import org.apache.nifi.migration.PropertyConfiguration;
 import org.apache.nifi.processor.ProcessContext;
 import org.apache.nifi.processor.ProcessSession;
 import org.apache.nifi.processor.Relationship;
@@ -109,8 +110,7 @@ public class PutMongo extends AbstractMongoProcessor {
         .expressionLanguageSupported(ExpressionLanguageScope.FLOWFILE_ATTRIBUTES)
         .build();
     static final PropertyDescriptor UPDATE_QUERY = new PropertyDescriptor.Builder()
-        .name("putmongo-update-query")
-        .displayName("Update Query")
+        .name("Update Query")
         .description("Specify a full MongoDB query to be used for the lookup query to do an update/upsert. NOTE: this field is ignored if the '%s' value is not empty."
             .formatted(UPDATE_QUERY_KEY.getDisplayName()))
         .required(false)
@@ -120,8 +120,7 @@ public class PutMongo extends AbstractMongoProcessor {
         .build();
 
     static final PropertyDescriptor UPDATE_OPERATION_MODE = new PropertyDescriptor.Builder()
-        .displayName("Update Mode")
-        .name("put-mongo-update-mode")
+        .name("Update Mode")
         .required(true)
         .dependsOn(MODE, MODE_UPDATE)
         .allowableValues(UPDATE_WITH_DOC, UPDATE_WITH_OPERATORS)
@@ -247,7 +246,7 @@ public class PutMongo extends AbstractMongoProcessor {
                 if (Objects.equals(updateOperationMode, UPDATE_WITH_DOC.getValue())) {
                     updateResult = collection.replaceOne(updateQuery, (Document) doc, new ReplaceOptions().upsert(upsert));
                 } else {
-                    BasicDBObject update = (BasicDBObject) doc;
+                    BasicDBObject update = (BasicDBObject) doc; //NOPMD
                     update.remove(updateKey);
                     UpdateOptions updateOptions = new UpdateOptions().upsert(upsert);
                     UpdateMethod updateQueryMode = context.getProperty(UPDATE_METHOD).asAllowableValue(UpdateMethod.class);
@@ -266,7 +265,15 @@ public class PutMongo extends AbstractMongoProcessor {
                 flowFile = session.putAttribute(flowFile, ATTRIBUTE_UPDATE_MODIFY_COUNT, String.valueOf(updateResult.getModifiedCount()));
                 BsonValue upsertedId = updateResult.getUpsertedId();
                 if (upsertedId != null) {
-                    String id = upsertedId.isString() ? upsertedId.asString().getValue() : upsertedId.asObjectId().getValue().toString();
+                    final String id;
+                    if (upsertedId.isString()) {
+                        id = upsertedId.asString().getValue();
+                    } else if (upsertedId.isObjectId()) {
+                        id = upsertedId.asObjectId().getValue().toString();
+                    } else {
+                        // Fallback for non-String/ObjectId identifiers (e.g., Document, Int32)
+                        id = upsertedId.toString();
+                    }
                     flowFile = session.putAttribute(flowFile, ATTRIBUTE_UPSERT_ID, id);
                 }
                 logger.info("updated {} into MongoDB", flowFile);
@@ -281,6 +288,13 @@ public class PutMongo extends AbstractMongoProcessor {
         }
     }
 
+    @Override
+    public void migrateProperties(PropertyConfiguration config) {
+        super.migrateProperties(config);
+        config.renameProperty("putmongo-update-query", UPDATE_QUERY.getName());
+        config.renameProperty("put-mongo-update-mode", UPDATE_OPERATION_MODE.getName());
+    }
+
     private void removeUpdateKeys(String updateKeyParam, Map doc) {
         String[] parts = updateKeyParam.split(",[\\s]*");
         for (String part : parts) {
@@ -293,12 +307,13 @@ public class PutMongo extends AbstractMongoProcessor {
     private Document parseUpdateKey(String updateKey, Map doc) {
         Document retVal;
         if (updateKey.equals("_id")) {
-            if (doc.get("_id") instanceof ObjectId) {
-                retVal = new Document("_id", doc.get("_id"));
-            } else if (ObjectId.isValid((String) doc.get("_id"))) {
-                retVal = new Document("_id", new ObjectId((String) doc.get("_id")));
+            Object idValue = doc.get("_id");
+            if (idValue instanceof ObjectId) {
+                retVal = new Document("_id", idValue);
+            } else if (idValue instanceof String && ObjectId.isValid((String) idValue)) {
+                retVal = new Document("_id", new ObjectId((String) idValue));
             } else {
-                retVal = new Document("_id", doc.get("_id"));
+                retVal = new Document("_id", idValue);
             }
         } else if (updateKey.contains(",")) {
             String[] parts = updateKey.split(",[\\s]*");

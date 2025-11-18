@@ -22,10 +22,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.nifi.flow.VersionedExternalFlow;
 import org.apache.nifi.processor.DataUnit;
 import org.apache.nifi.registry.VersionedFlowConverter;
-import org.apache.nifi.registry.client.NiFiRegistryException;
 import org.apache.nifi.registry.flow.VersionedFlowSnapshot;
 import org.apache.nifi.registry.flow.VersionedFlowSnapshotMetadata;
-import org.apache.nifi.stateless.core.RegistryUtil;
+import org.apache.nifi.stateless.core.FlowSnapshotProvider;
+import org.apache.nifi.stateless.core.RegistryFlowSnapshotProvider;
 import org.apache.nifi.stateless.engine.StatelessEngineConfiguration;
 import org.apache.nifi.stateless.flow.DataflowDefinition;
 import org.apache.nifi.stateless.flow.DataflowDefinitionParser;
@@ -99,12 +99,14 @@ public class PropertiesFileFlowDefinitionParser implements DataflowDefinitionPar
     private static final String TRANSACTION_THRESHOLD_TIME = "nifi.stateless.transaction.thresholds.time";
 
 
+    @Override
     public DataflowDefinition parseFlowDefinition(final File propertiesFile, final StatelessEngineConfiguration engineConfig, final List<ParameterOverride> parameterOverrides)
                         throws IOException, StatelessConfigurationException {
         final Map<String, String> properties = readPropertyValues(propertiesFile);
         return parseFlowDefinition(properties, engineConfig, parameterOverrides);
     }
 
+    @Override
     public DataflowDefinition parseFlowDefinition(final Map<String, String> properties, final StatelessEngineConfiguration engineConfig,
                                                                          final List<ParameterOverride> parameterOverrides) throws IOException, StatelessConfigurationException {
 
@@ -351,7 +353,7 @@ public class PropertiesFileFlowDefinitionParser implements DataflowDefinitionPar
 
     private String getTrimmedProperty(final Map<String, String> properties, final String propertyName) {
         final String propertyValue = properties.get(propertyName);
-        return (propertyValue == null || propertyValue.trim().isEmpty()) ? null : propertyValue.trim();
+        return (propertyValue == null || propertyValue.isBlank()) ? null : propertyValue.trim();
     }
 
     private Long getLongProperty(final Map<String, String> properties, final String propertyName) {
@@ -404,7 +406,7 @@ public class PropertiesFileFlowDefinitionParser implements DataflowDefinitionPar
                 logger.warn("Found property with name <{}>. This property name contains leading or trailing white space, which may not be intended.", key);
             }
 
-            if (!value.trim().equals(value) && !value.trim().isEmpty()) {
+            if (!value.trim().equals(value) && !value.isBlank()) {
                 // If value consists only of white space, don't worry about it. But if the value consists of non-white-space characters but has leading or trailing white space
                 // it may be cause for concern.
                 logger.warn("Found property with name <{}> and value <{}>. This property value contains leading or trailing white space, which may not be intended.", key, value);
@@ -485,7 +487,7 @@ public class PropertiesFileFlowDefinitionParser implements DataflowDefinitionPar
         throws IOException, StatelessConfigurationException {
 
         final String flowSnapshotFilename = properties.get(FLOW_SNAPSHOT_FILE_KEY);
-        if (flowSnapshotFilename != null && !flowSnapshotFilename.trim().isEmpty()) {
+        if (flowSnapshotFilename != null && !flowSnapshotFilename.isBlank()) {
             final File flowSnapshotFile = new File(flowSnapshotFilename.trim());
             try {
                 return readVersionedFlowSnapshot(flowSnapshotFile);
@@ -496,7 +498,7 @@ public class PropertiesFileFlowDefinitionParser implements DataflowDefinitionPar
         }
 
         final String flowSnapshotUrl = properties.get(FLOW_SNAPSHOT_URL_KEY);
-        if (flowSnapshotUrl != null && !flowSnapshotUrl.trim().isEmpty()) {
+        if (flowSnapshotUrl != null && !flowSnapshotUrl.isBlank()) {
             final String useSslPropertyValue = properties.get(FLOW_SNAPSHOT_URL_USE_SSLCONTEXT_KEY);
             final boolean useSsl = Boolean.parseBoolean(useSslPropertyValue);
 
@@ -508,7 +510,7 @@ public class PropertiesFileFlowDefinitionParser implements DataflowDefinitionPar
         }
 
         final String flowContents = properties.get(FLOW_SNAPSHOT_CONTENTS_KEY);
-        if (flowContents != null && !flowContents.trim().isEmpty()) {
+        if (flowContents != null && !flowContents.isBlank()) {
             final byte[] flowContentsBytes = flowContents.getBytes(StandardCharsets.UTF_8);
 
             try (final InputStream in = new ByteArrayInputStream(flowContentsBytes)) {
@@ -538,13 +540,13 @@ public class PropertiesFileFlowDefinitionParser implements DataflowDefinitionPar
         try {
             final SSLContext sslContext = SslConfigurationUtil.createSslContext(sslContextDefinition);
             return fetchFlowFromRegistry(registryUrl, bucketId, flowId, flowVersion, sslContext);
-        } catch (final NiFiRegistryException e) {
+        } catch (final IOException e) {
             throw new StatelessConfigurationException("Could not fetch flow from Registry", e);
         }
     }
 
     private boolean isEmpty(final String value) {
-        return value == null || value.trim().isEmpty();
+        return value == null || value.isBlank();
     }
 
     private VersionedFlowSnapshot fetchFlowFromUrl(final String url, final SslContextDefinition sslContextDefinition) throws IOException {
@@ -595,13 +597,13 @@ public class PropertiesFileFlowDefinitionParser implements DataflowDefinitionPar
     }
 
     private VersionedFlowSnapshot fetchFlowFromRegistry(final String registryUrl, final String bucketId, final String flowId, final Integer flowVersion,
-                                                        final SSLContext sslContext) throws IOException, NiFiRegistryException {
+                                                        final SSLContext sslContext) throws IOException {
 
         logger.info("Fetching flow from NiFi Registry at {}", registryUrl);
         final long start = System.currentTimeMillis();
 
-        final RegistryUtil registryUtil = new RegistryUtil(registryUrl, sslContext);
-        final VersionedFlowSnapshot snapshot = registryUtil.getFlowByID(bucketId, flowId, flowVersion == null ? -1 : flowVersion);
+        final FlowSnapshotProvider flowSnapshotProvider = new RegistryFlowSnapshotProvider(registryUrl, sslContext);
+        final VersionedFlowSnapshot snapshot = flowSnapshotProvider.getFlowSnapshot(bucketId, flowId, flowVersion == null ? -1 : flowVersion);
 
         final long millis = System.currentTimeMillis() - start;
         logger.info("Successfully fetched flow from NiFi Registry in {} millis", millis);

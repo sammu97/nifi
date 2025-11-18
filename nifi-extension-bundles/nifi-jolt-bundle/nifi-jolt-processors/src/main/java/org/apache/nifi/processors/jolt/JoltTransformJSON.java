@@ -55,7 +55,7 @@ import java.util.stream.Stream;
 
 @SideEffectFree
 @SupportsBatching
-@Tags({"json", "jolt", "transform", "shiftr", "chainr", "defaultr", "removr", "cardinality", "sort"})
+@Tags({"json", "jolt", "transform", "chainr", "shift", "default", "remove", "cardinality", "sort"})
 @InputRequirement(InputRequirement.Requirement.INPUT_REQUIRED)
 @WritesAttribute(attribute = "mime.type", description = "Always set to application/json")
 @CapabilityDescription("Applies a list of Jolt specifications to either the FlowFile JSON content or a specified FlowFile JSON attribute. "
@@ -82,7 +82,6 @@ public class JoltTransformJSON extends AbstractJoltTransform {
 
     public static final PropertyDescriptor PRETTY_PRINT = new PropertyDescriptor.Builder()
             .name("Pretty Print")
-            .displayName("Pretty Print")
             .description("Apply pretty print formatting to the output of the Jolt transform")
             .required(true)
             .allowableValues("true", "false")
@@ -91,7 +90,6 @@ public class JoltTransformJSON extends AbstractJoltTransform {
 
     public static final PropertyDescriptor MAX_STRING_LENGTH = new PropertyDescriptor.Builder()
             .name("Max String Length")
-            .displayName("Max String Length")
             .description("The maximum allowed length of a string value when parsing the JSON document")
             .required(true)
             .defaultValue("20 MB")
@@ -209,6 +207,7 @@ public class JoltTransformJSON extends AbstractJoltTransform {
     }
 
     @OnScheduled
+    @Override
     public void setup(final ProcessContext context) {
         super.setup(context);
         final int maxStringLength = context.getProperty(MAX_STRING_LENGTH).asDataSize(DataUnit.B).intValue();

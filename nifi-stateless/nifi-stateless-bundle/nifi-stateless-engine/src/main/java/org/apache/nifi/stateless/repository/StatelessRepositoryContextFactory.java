@@ -20,6 +20,7 @@ package org.apache.nifi.stateless.repository;
 import org.apache.nifi.components.state.StateManager;
 import org.apache.nifi.components.state.StateManagerProvider;
 import org.apache.nifi.connectable.Connectable;
+import org.apache.nifi.controller.ProcessorNode;
 import org.apache.nifi.controller.repository.ContentRepository;
 import org.apache.nifi.controller.repository.CounterRepository;
 import org.apache.nifi.controller.repository.FlowFileEventRepository;
@@ -42,7 +43,7 @@ public class StatelessRepositoryContextFactory implements RepositoryContextFacto
     private final StateManagerProvider stateManagerProvider;
 
     public StatelessRepositoryContextFactory(final ContentRepository contentRepository, final FlowFileRepository flowFileRepository, final FlowFileEventRepository flowFileEventRepository,
-                                             final CounterRepository counterRepository, final ProvenanceEventRepository provenanceRepository, final StateManagerProvider stateManagerProvider) {
+                                             final CounterRepository counterRepository, final StateManagerProvider stateManagerProvider) {
         this.contentRepository = contentRepository;
         this.flowFileRepository = flowFileRepository;
         this.flowFileEventRepository = flowFileEventRepository;
@@ -52,7 +53,10 @@ public class StatelessRepositoryContextFactory implements RepositoryContextFacto
 
     @Override
     public RepositoryContext createRepositoryContext(final Connectable connectable, final ProvenanceEventRepository provenanceEventRepository) {
-        final StateManager stateManager = stateManagerProvider.getStateManager(connectable.getIdentifier());
+        final Class<?> componentClass = (connectable instanceof ProcessorNode && ((ProcessorNode) connectable).getProcessor() != null)
+                ? ((ProcessorNode) connectable).getProcessor().getClass()
+                : null;
+        final StateManager stateManager = stateManagerProvider.getStateManager(connectable.getIdentifier(), componentClass);
         return new StatelessRepositoryContext(connectable, new AtomicLong(0L), contentRepository, flowFileRepository,
             flowFileEventRepository, counterRepository, provenanceEventRepository, stateManager);
     }
@@ -62,6 +66,7 @@ public class StatelessRepositoryContextFactory implements RepositoryContextFacto
         return contentRepository;
     }
 
+    @Override
     public FlowFileRepository getFlowFileRepository() {
         return flowFileRepository;
     }
@@ -69,6 +74,11 @@ public class StatelessRepositoryContextFactory implements RepositoryContextFacto
     @Override
     public FlowFileEventRepository getFlowFileEventRepository() {
         return flowFileEventRepository;
+    }
+
+    @Override
+    public CounterRepository getCounterRepository() {
+        return counterRepository;
     }
 
     @Override

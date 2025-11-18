@@ -486,7 +486,7 @@ public class StandardVersionedComponentSynchronizer implements VersionedComponen
 
         final VersionedFlowCoordinates remoteCoordinates = proposed.getVersionedFlowCoordinates();
         if (remoteCoordinates == null) {
-            group.disconnectVersionControl(false);
+            group.disconnectVersionControl();
         } else {
             final String registryId = determineRegistryId(remoteCoordinates);
             final String branch = remoteCoordinates.getBranch();
@@ -517,7 +517,7 @@ public class StandardVersionedComponentSynchronizer implements VersionedComponen
                     .storageLocation(storageLocation)
                     .flowName(flowId)
                     .version(version)
-                    .flowSnapshot(syncOptions.isUpdateGroupVersionControlSnapshot() ? proposed : null)
+                    .flowSnapshot(null)
                     .status(new StandardVersionedFlowStatus(flowState, flowState.getDescription()))
                     .build();
 
@@ -1514,7 +1514,6 @@ public class StandardVersionedComponentSynchronizer implements VersionedComponen
                     case THROW_TIMEOUT_EXCEPTION:
                         throw e;
                     case TERMINATE:
-                    default:
                         ((ProcessorNode) component).terminate();
                         return;
                 }

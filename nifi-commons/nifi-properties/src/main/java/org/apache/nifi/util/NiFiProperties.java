@@ -98,7 +98,6 @@ public class NiFiProperties extends ApplicationProperties {
 
     // flowfile repository properties
     public static final String FLOWFILE_REPOSITORY_IMPLEMENTATION = "nifi.flowfile.repository.implementation";
-    public static final String FLOWFILE_REPOSITORY_WAL_IMPLEMENTATION = "nifi.flowfile.repository.wal.implementation";
     public static final String FLOWFILE_REPOSITORY_ALWAYS_SYNC = "nifi.flowfile.repository.always.sync";
     public static final String FLOWFILE_REPOSITORY_DIRECTORY = "nifi.flowfile.repository.directory";
     public static final String FLOWFILE_REPOSITORY_CHECKPOINT_INTERVAL = "nifi.flowfile.repository.checkpoint.interval";
@@ -153,8 +152,6 @@ public class NiFiProperties extends ApplicationProperties {
     public static final String SECURITY_USER_AUTHORIZER = "nifi.security.user.authorizer";
     public static final String SECURITY_ANONYMOUS_AUTHENTICATION = "nifi.security.allow.anonymous.authentication";
     public static final String SECURITY_USER_LOGIN_IDENTITY_PROVIDER = "nifi.security.user.login.identity.provider";
-    public static final String SECURITY_OCSP_RESPONDER_URL = "nifi.security.ocsp.responder.url";
-    public static final String SECURITY_OCSP_RESPONDER_CERTIFICATE = "nifi.security.ocsp.responder.certificate";
     public static final String SECURITY_IDENTITY_MAPPING_PATTERN_PREFIX = "nifi.security.identity.mapping.pattern.";
     public static final String SECURITY_IDENTITY_MAPPING_VALUE_PREFIX = "nifi.security.identity.mapping.value.";
     public static final String SECURITY_IDENTITY_MAPPING_TRANSFORM_PREFIX = "nifi.security.identity.mapping.transform.";
@@ -226,7 +223,6 @@ public class NiFiProperties extends ApplicationProperties {
     // cluster common properties
     public static final String CLUSTER_PROTOCOL_HEARTBEAT_INTERVAL = "nifi.cluster.protocol.heartbeat.interval";
     public static final String CLUSTER_PROTOCOL_HEARTBEAT_MISSABLE_MAX = "nifi.cluster.protocol.heartbeat.missable.max";
-    public static final String CLUSTER_PROTOCOL_IS_SECURE = "nifi.cluster.protocol.is.secure";
     public static final String CLUSTER_LEADER_ELECTION_IMPLEMENTATION = "nifi.cluster.leader.election.implementation";
 
     // cluster node properties
@@ -495,7 +491,7 @@ public class NiFiProperties extends ApplicationProperties {
 
     public Integer getIntegerProperty(final String propertyName, final Integer defaultValue) {
         final String value = getProperty(propertyName);
-        if (value == null || value.trim().isEmpty()) {
+        if (value == null || value.isBlank()) {
             return defaultValue;
         }
 
@@ -927,17 +923,18 @@ public class NiFiProperties extends ApplicationProperties {
     }
 
     public String getClusterProtocolManagerToNodeApiScheme() {
-        final String isSecureProperty = getProperty(CLUSTER_PROTOCOL_IS_SECURE);
-        if (Boolean.valueOf(isSecureProperty)) {
-            return "https";
-        } else {
+        final String httpsPort = getProperty(WEB_HTTPS_PORT);
+
+        if (httpsPort == null || httpsPort.isBlank()) {
             return "http";
+        } else {
+            return "https";
         }
     }
 
     public File getKerberosConfigurationFile() {
         final String krb5File = getProperty(KERBEROS_KRB5_FILE);
-        if (krb5File != null && krb5File.trim().length() > 0) {
+        if (krb5File != null && !krb5File.isBlank()) {
             return new File(krb5File.trim());
         } else {
             return null;
@@ -1316,7 +1313,7 @@ public class NiFiProperties extends ApplicationProperties {
             port = getPort();
 
             if (port == null) {
-                throw new RuntimeException(String.format("The %s must be specified if running in a cluster with %s set to false.", WEB_HTTP_PORT, CLUSTER_PROTOCOL_IS_SECURE));
+                throw new IllegalStateException("Application property [%s] must be specified".formatted(WEB_HTTP_PORT));
             }
         } else {
             // get host
@@ -1329,7 +1326,7 @@ public class NiFiProperties extends ApplicationProperties {
             port = getSslPort();
 
             if (port == null) {
-                throw new RuntimeException(String.format("The %s must be specified if running in a cluster with %s set to true.", WEB_HTTPS_PORT, CLUSTER_PROTOCOL_IS_SECURE));
+                throw new IllegalStateException("Application property [%s] must be specified".formatted(WEB_HTTPS_PORT));
             }
         }
 
@@ -1425,9 +1422,10 @@ public class NiFiProperties extends ApplicationProperties {
         return getProperty(MAX_APPENDABLE_CLAIM_SIZE, DEFAULT_MAX_APPENDABLE_CLAIM_SIZE);
     }
 
+    @Override
     public String getProperty(final String key, final String defaultValue) {
         final String value = getProperty(key);
-        return (value == null || value.trim().isEmpty()) ? defaultValue : value;
+        return (value == null || value.isBlank()) ? defaultValue : value;
     }
 
     public String getBoredYieldDuration() {
@@ -1639,7 +1637,7 @@ public class NiFiProperties extends ApplicationProperties {
         long backPressureCount;
         try {
             String backPressureCountStr = getProperty(BACKPRESSURE_COUNT);
-            if (backPressureCountStr == null || backPressureCountStr.trim().isEmpty()) {
+            if (backPressureCountStr == null || backPressureCountStr.isBlank()) {
                 backPressureCount = DEFAULT_BACKPRESSURE_COUNT;
             } else {
                 backPressureCount = Long.parseLong(backPressureCountStr);

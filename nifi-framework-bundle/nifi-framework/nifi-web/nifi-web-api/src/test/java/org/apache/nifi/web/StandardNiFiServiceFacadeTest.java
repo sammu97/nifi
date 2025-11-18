@@ -37,6 +37,7 @@ import org.apache.nifi.authorization.user.NiFiUser;
 import org.apache.nifi.authorization.user.NiFiUserDetails;
 import org.apache.nifi.authorization.user.StandardNiFiUser.Builder;
 import org.apache.nifi.components.PropertyDescriptor;
+import org.apache.nifi.controller.Counter;
 import org.apache.nifi.controller.FlowController;
 import org.apache.nifi.controller.ProcessorNode;
 import org.apache.nifi.controller.PropertyConfiguration;
@@ -44,10 +45,13 @@ import org.apache.nifi.controller.flow.FlowManager;
 import org.apache.nifi.controller.service.ControllerServiceNode;
 import org.apache.nifi.controller.service.ControllerServiceProvider;
 import org.apache.nifi.controller.status.ProcessGroupStatus;
+import org.apache.nifi.flow.ExecutionEngine;
 import org.apache.nifi.flow.ExternalControllerServiceReference;
 import org.apache.nifi.flow.ParameterProviderReference;
+import org.apache.nifi.flow.VersionedComponent;
 import org.apache.nifi.flow.VersionedControllerService;
 import org.apache.nifi.flow.VersionedParameterContext;
+import org.apache.nifi.flow.VersionedProcessGroup;
 import org.apache.nifi.flow.VersionedProcessor;
 import org.apache.nifi.flow.VersionedPropertyDescriptor;
 import org.apache.nifi.flow.VersionedReportingTask;
@@ -63,6 +67,13 @@ import org.apache.nifi.nar.ExtensionManager;
 import org.apache.nifi.registry.flow.FlowRegistryUtil;
 import org.apache.nifi.registry.flow.RegisteredFlowSnapshot;
 import org.apache.nifi.registry.flow.VersionControlInformation;
+import org.apache.nifi.registry.flow.diff.ComparableDataFlow;
+import org.apache.nifi.registry.flow.diff.DifferenceType;
+import org.apache.nifi.registry.flow.diff.FlowComparator;
+import org.apache.nifi.registry.flow.diff.FlowComparatorVersionedStrategy;
+import org.apache.nifi.registry.flow.diff.StandardComparableDataFlow;
+import org.apache.nifi.registry.flow.diff.StandardFlowComparator;
+import org.apache.nifi.registry.flow.diff.StaticDifferenceDescriptor;
 import org.apache.nifi.registry.flow.mapping.FlowMappingOptions;
 import org.apache.nifi.registry.flow.mapping.InstantiatedVersionedProcessGroup;
 import org.apache.nifi.registry.flow.mapping.NiFiRegistryFlowMapper;
@@ -75,6 +86,9 @@ import org.apache.nifi.util.MockBulletinRepository;
 import org.apache.nifi.util.NiFiProperties;
 import org.apache.nifi.validation.RuleViolation;
 import org.apache.nifi.validation.RuleViolationsManager;
+import org.apache.nifi.web.api.dto.CounterDTO;
+import org.apache.nifi.web.api.dto.CountersDTO;
+import org.apache.nifi.web.api.dto.CountersSnapshotDTO;
 import org.apache.nifi.web.api.dto.DtoFactory;
 import org.apache.nifi.web.api.dto.EntityFactory;
 import org.apache.nifi.web.api.dto.ProcessGroupDTO;
@@ -83,6 +97,9 @@ import org.apache.nifi.web.api.dto.action.HistoryDTO;
 import org.apache.nifi.web.api.dto.action.HistoryQueryDTO;
 import org.apache.nifi.web.api.dto.status.StatusHistoryDTO;
 import org.apache.nifi.web.api.entity.ActionEntity;
+import org.apache.nifi.web.api.entity.AffectedComponentEntity;
+import org.apache.nifi.web.api.entity.ClearBulletinsResultEntity;
+import org.apache.nifi.web.api.entity.ClearBulletinsForGroupResultsEntity;
 import org.apache.nifi.web.api.entity.CopyRequestEntity;
 import org.apache.nifi.web.api.entity.CopyResponseEntity;
 import org.apache.nifi.web.api.entity.ProcessGroupEntity;
@@ -108,11 +125,13 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Date;
+import java.util.Iterator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -121,6 +140,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -139,10 +159,10 @@ import static org.mockito.ArgumentMatchers.anySet;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.same;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.same;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -292,6 +312,66 @@ public class StandardNiFiServiceFacadeTest {
         serviceFacade.setProcessGroupDAO(processGroupDAO);
         serviceFacade.setRuleViolationsManager(ruleViolationsManager);
 
+    }
+
+    @Test
+    public void testGetComponentsAffectedByFlowUpdate_WithNewStatelessProcessGroup_ReproducesNPE() {
+        final String groupId = UUID.randomUUID().toString();
+        final ProcessGroup processGroup = mock(ProcessGroup.class);
+        when(processGroupDAO.getProcessGroup(groupId)).thenReturn(processGroup);
+        when(processGroup.getAncestorServiceIds()).thenReturn(Collections.emptySet());
+
+        final FlowManager flowManager = mock(FlowManager.class);
+        final ExtensionManager extensionManager = mock(ExtensionManager.class);
+        when(flowController.getFlowManager()).thenReturn(flowManager);
+        when(flowController.getExtensionManager()).thenReturn(extensionManager);
+
+        final StandardNiFiServiceFacade serviceFacadeSpy = spy(serviceFacade);
+        final NiFiRegistryFlowMapper flowMapper = mock(NiFiRegistryFlowMapper.class);
+        doReturn(flowMapper).when(serviceFacadeSpy).makeNiFiRegistryFlowMapper(extensionManager);
+
+        final InstantiatedVersionedProcessGroup localRoot = new InstantiatedVersionedProcessGroup("local-root-instance", groupId);
+        when(flowMapper.mapProcessGroup(any(ProcessGroup.class), any(ControllerServiceProvider.class), any(FlowManager.class), eq(true)))
+                .thenReturn(localRoot);
+
+        // Build proposed (updated) flow with a NEW child Process Group configured with Stateless Execution Engine
+        final VersionedProcessGroup proposedRoot = new VersionedProcessGroup();
+        proposedRoot.setIdentifier("root");
+        proposedRoot.setName("root");
+
+        final VersionedProcessGroup newChild = new VersionedProcessGroup();
+        newChild.setIdentifier("child");
+        newChild.setName("child");
+        newChild.setGroupIdentifier("root");
+        newChild.setExecutionEngine(ExecutionEngine.STATELESS);
+        proposedRoot.getProcessGroups().add(newChild);
+
+        final RegisteredFlowSnapshot updatedSnapshot = new RegisteredFlowSnapshot();
+        updatedSnapshot.setFlowContents(proposedRoot);
+
+        final ComparableDataFlow localFlow = new StandardComparableDataFlow("Current Flow", localRoot);
+        final ComparableDataFlow proposedFlow = new StandardComparableDataFlow("New Flow", proposedRoot);
+        final FlowComparator flowComparator = new StandardFlowComparator(
+                localFlow,
+                proposedFlow,
+                Collections.emptySet(),
+                new StaticDifferenceDescriptor(),
+                Function.identity(),
+                VersionedComponent::getIdentifier,
+                FlowComparatorVersionedStrategy.DEEP);
+
+        final org.apache.nifi.registry.flow.diff.FlowComparison comparison = flowComparator.compare();
+        final boolean hasExecEngineChange = comparison.getDifferences().stream()
+                .anyMatch(d -> d.getDifferenceType() == DifferenceType.EXECUTION_ENGINE_CHANGED
+                        && d.getComponentA() == null
+                        && d.getComponentB() instanceof VersionedProcessGroup
+                        && "child".equals(d.getComponentB().getIdentifier()));
+        assertTrue(hasExecEngineChange, "Expected EXECUTION_ENGINE_CHANGED difference for Stateless child group");
+
+        // Act: Should not throw after fix; no local components are affected by a new Stateless child group
+        final Set<AffectedComponentEntity> affected = serviceFacadeSpy.getComponentsAffectedByFlowUpdate(groupId, updatedSnapshot);
+        assertNotNull(affected);
+        assertTrue(affected.isEmpty(), "No local components should be affected for added Stateless group");
     }
 
     private FlowChangeAction getAction(final Integer actionId, final String processorId) {
@@ -1023,6 +1103,16 @@ public class StandardNiFiServiceFacadeTest {
         }
 
         @Override
+        public List<Bulletin> findBulletinsForSource(String sourceId) {
+            List<Bulletin> ans = new ArrayList<>();
+            for (Bulletin b : bulletinList) {
+                if (sourceId.equals(b.getSourceId()))
+                    ans.add(b);
+            }
+            return ans;
+        }
+
+        @Override
         public List<Bulletin> findBulletinsForGroupBySource(String groupId) {
             List<Bulletin> ans = new ArrayList<>();
             for (Bulletin b : bulletinList) {
@@ -1032,11 +1122,124 @@ public class StandardNiFiServiceFacadeTest {
             return ans;
         }
 
+        @Override
+        public int clearBulletinsForComponent(String sourceId, Instant fromTimestamp) {
+            int cleared = 0;
+            final Iterator<Bulletin> iterator = bulletinList.iterator();
+            while (iterator.hasNext()) {
+                final Bulletin bulletin = iterator.next();
+                if (sourceId.equals(bulletin.getSourceId())
+                        && bulletin.getTimestamp() != null
+                        && !bulletin.getTimestamp().toInstant().isAfter(fromTimestamp)) {
+                    iterator.remove();
+                    cleared++;
+                }
+            }
+            return cleared;
+        }
+
+        @Override
+        public int clearBulletinsForComponents(Collection<String> sourceIds, Instant fromTimestamp) {
+            if (sourceIds == null || sourceIds.isEmpty()) {
+                throw new IllegalArgumentException("Source ID cannot be null or empty");
+            }
+
+            int cleared = 0;
+            final Iterator<Bulletin> iterator = bulletinList.iterator();
+            while (iterator.hasNext()) {
+                final Bulletin bulletin = iterator.next();
+                if (sourceIds.contains(bulletin.getSourceId())
+                        && bulletin.getTimestamp() != null
+                        && !bulletin.getTimestamp().toInstant().isAfter(fromTimestamp)) {
+                    iterator.remove();
+                    cleared++;
+                }
+            }
+            return cleared;
+        }
+
+        public void addTestBulletin(String sourceId, String message, Instant timestamp) {
+            TestBulletin bulletin = new TestBulletin(sourceId, message, Date.from(timestamp));
+            bulletinList.add(bulletin);
+        }
+
     }
 
+    private static class TestBulletin extends Bulletin {
+        private final String sourceId;
+        private final String message;
+        private final Date timestamp;
+
+        public TestBulletin(String sourceId, String message, Date timestamp) {
+            super(System.nanoTime());
+            this.sourceId = sourceId;
+            this.message = message;
+            this.timestamp = timestamp;
+        }
+
+        @Override
+        public String getSourceId() {
+            return sourceId;
+        }
+
+        @Override
+        public String getMessage() {
+            return message;
+        }
+
+        @Override
+        public Date getTimestamp() {
+            return timestamp;
+        }
+
+        @Override
+        public String getCategory() {
+            return "Test";
+        }
+
+        @Override
+        public String getLevel() {
+            return "INFO";
+        }
+
+        @Override
+        public ComponentType getSourceType() {
+            return ComponentType.PROCESSOR;
+        }
+
+        @Override
+        public String getSourceName() {
+            return "Test Component";
+        }
+
+        @Override
+        public String getGroupId() {
+            return "test-group";
+        }
+
+        @Override
+        public String getGroupName() {
+            return "Test Group";
+        }
+
+        @Override
+        public String getGroupPath() {
+            return "/";
+        }
+
+        @Override
+        public String getNodeAddress() {
+            return null;
+        }
+
+        @Override
+        public String getFlowFileUuid() {
+            return null;
+        }
+    }
 
     @Test
-    public void testGetRuleViolationsForGroupIsRecursive() throws Exception {
+    public void testGetRuleViolationsForRoot() {
         // GIVEN
         int ruleViolationCounter = 0;
 
@@ -1076,8 +1279,138 @@ public class StandardNiFiServiceFacadeTest {
                 grandChildRuleViolation1, grandChildRuleViolation2, grandChildRuleViolation3
         ));
 
+        when(processGroupDAO.getProcessGroup(FlowManager.ROOT_GROUP_ID_ALIAS)).thenReturn(processGroup);
+        when(ruleViolationsManager.getAllRuleViolations()).thenReturn(expected);
+
         // WHEN
         Collection<RuleViolation> actual = serviceFacade.getRuleViolationStream(processGroup.getIdentifier()).collect(Collectors.toSet());
+
+        // THEN
+        assertEquals(expected, actual);
+    }
+
+    @Test
+    public void testGetRuleViolationsForRootWithAlias() {
+        // GIVEN
+        int ruleViolationCounter = 0;
+
+        String groupId = "groupId";
+        String childGroupId = "childGroupId";
+        String grandChildGroupId = "grandChildGroupId";
+
+        RuleViolation ruleViolation1 = createRuleViolation(groupId, ruleViolationCounter++);
+        RuleViolation ruleViolation2 = createRuleViolation(groupId, ruleViolationCounter++);
+
+        RuleViolation childRuleViolation1 = createRuleViolation(childGroupId, ruleViolationCounter++);
+        RuleViolation childRuleViolation2 = createRuleViolation(childGroupId, ruleViolationCounter++);
+
+        RuleViolation grandChildRuleViolation1 = createRuleViolation(grandChildGroupId, ruleViolationCounter++);
+        RuleViolation grandChildRuleViolation2 = createRuleViolation(grandChildGroupId, ruleViolationCounter++);
+        RuleViolation grandChildRuleViolation3 = createRuleViolation(grandChildGroupId, ruleViolationCounter++);
+
+        ProcessGroup grandChildProcessGroup = mockProcessGroup(
+                grandChildGroupId,
+                Collections.emptyList(),
+                Arrays.asList(grandChildRuleViolation1, grandChildRuleViolation2, grandChildRuleViolation3)
+        );
+        ProcessGroup childProcessGroup = mockProcessGroup(
+                childGroupId,
+                Arrays.asList(grandChildProcessGroup),
+                Arrays.asList(childRuleViolation1, childRuleViolation2)
+        );
+        ProcessGroup processGroup = mockProcessGroup(
+                groupId,
+                Arrays.asList(childProcessGroup),
+                Arrays.asList(ruleViolation1, ruleViolation2)
+        );
+
+        Collection<RuleViolation> expected = new HashSet<>(Arrays.asList(
+                ruleViolation1, ruleViolation2,
+                childRuleViolation1, childRuleViolation2,
+                grandChildRuleViolation1, grandChildRuleViolation2, grandChildRuleViolation3
+        ));
+
+        when(processGroupDAO.getProcessGroup(FlowManager.ROOT_GROUP_ID_ALIAS)).thenReturn(processGroup);
+        when(ruleViolationsManager.getAllRuleViolations()).thenReturn(expected);
+
+        // WHEN
+        Collection<RuleViolation> actual = serviceFacade.getRuleViolationStream(FlowManager.ROOT_GROUP_ID_ALIAS).collect(Collectors.toSet());
+
+        // THEN
+        assertEquals(expected, actual);
+    }
+
+
+    @Test
+    public void testGetRuleViolationsEmpty() {
+        // GIVEN
+        String groupId = "groupId";
+
+        ProcessGroup processGroup = mockProcessGroup(
+                groupId,
+                Arrays.asList(),
+                Arrays.asList()
+        );
+
+        Collection<RuleViolation> expected = new HashSet<>(List.of());
+
+        when(ruleViolationsManager.isEmpty()).thenReturn(true);
+
+        // WHEN
+        Collection<RuleViolation> actual = serviceFacade.getRuleViolationStream(processGroup.getIdentifier()).collect(Collectors.toSet());
+
+        // THEN
+        assertEquals(expected, actual);
+    }
+
+    @Test
+    public void testGetRuleViolationsForGroupIsRecursive() {
+        // GIVEN
+        int ruleViolationCounter = 0;
+
+        String rootGroupId = "groupId";
+        String childGroupId = "childGroupId";
+        String grandChildGroupId = "grandChildGroupId";
+
+        RuleViolation ruleViolation1 = createRuleViolation(rootGroupId, ruleViolationCounter++);
+        RuleViolation ruleViolation2 = createRuleViolation(rootGroupId, ruleViolationCounter++);
+
+        RuleViolation childRuleViolation1 = createRuleViolation(childGroupId, ruleViolationCounter++);
+        RuleViolation childRuleViolation2 = createRuleViolation(childGroupId, ruleViolationCounter++);
+
+        RuleViolation grandChildRuleViolation1 = createRuleViolation(grandChildGroupId, ruleViolationCounter++);
+        RuleViolation grandChildRuleViolation2 = createRuleViolation(grandChildGroupId, ruleViolationCounter++);
+        RuleViolation grandChildRuleViolation3 = createRuleViolation(grandChildGroupId, ruleViolationCounter);
+
+        ProcessGroup grandChildProcessGroup = mockProcessGroup(
+                grandChildGroupId,
+                Collections.emptyList(),
+                Arrays.asList(grandChildRuleViolation1, grandChildRuleViolation2, grandChildRuleViolation3)
+        );
+        ProcessGroup childProcessGroup = mockProcessGroup(
+                childGroupId,
+                Arrays.asList(grandChildProcessGroup),
+                Arrays.asList(childRuleViolation1, childRuleViolation2)
+        );
+        mockProcessGroup(
+                rootGroupId,
+                Arrays.asList(childProcessGroup),
+                Arrays.asList(ruleViolation1, ruleViolation2)
+        );
+
+        when(ruleViolationsManager.getRuleViolationsForGroups(Set.of(childGroupId, grandChildGroupId))).thenReturn(
+                Arrays.asList(
+                        childRuleViolation1, childRuleViolation2,
+                        grandChildRuleViolation1, grandChildRuleViolation2, grandChildRuleViolation3)
+        );
+
+        Collection<RuleViolation> expected = new HashSet<>(Arrays.asList(
+                childRuleViolation1, childRuleViolation2,
+                grandChildRuleViolation1, grandChildRuleViolation2, grandChildRuleViolation3
+        ));
+
+        // WHEN
+        Collection<RuleViolation> actual = serviceFacade.getRuleViolationStream(childProcessGroup.getIdentifier()).collect(Collectors.toSet());
 
         // THEN
         assertEquals(expected, actual);
@@ -1148,5 +1481,187 @@ public class StandardNiFiServiceFacadeTest {
         assertNotEquals(originalReportingTaskId, reportingTask.getIdentifier());
 
         assertEquals(service.getInstanceIdentifier(), reportingTask.getProperties().get(serviceDescriptor.getName()));
+    }
+
+    @Test
+    public void testUpdateAllCounters() {
+        // Mock ControllerFacade to return a list of reset counters
+        final ControllerFacade controllerFacade = mock(ControllerFacade.class);
+        final List<Counter> mockCounters = new ArrayList<>();
+
+        // Create mock counters that would be returned after reset
+        final Counter counter1 = mock(Counter.class);
+        when(counter1.getIdentifier()).thenReturn("counter1-id");
+        when(counter1.getName()).thenReturn("counter1");
+        when(counter1.getContext()).thenReturn("context1");
+        when(counter1.getValue()).thenReturn(0L); // Should be 0 after reset
+
+        final Counter counter2 = mock(Counter.class);
+        when(counter2.getIdentifier()).thenReturn("counter2-id");
+        when(counter2.getName()).thenReturn("counter2");
+        when(counter2.getContext()).thenReturn("context2");
+        when(counter2.getValue()).thenReturn(0L); // Should be 0 after reset
+
+        mockCounters.add(counter1);
+        mockCounters.add(counter2);
+
+        when(controllerFacade.resetAllCounters()).thenReturn(mockCounters);
+
+        // Mock DtoFactory to create CounterDTOs
+        final DtoFactory dtoFactory = mock(DtoFactory.class);
+        final CounterDTO counterDto1 = new CounterDTO();
+        counterDto1.setId("counter1-id");
+        counterDto1.setName("counter1");
+        counterDto1.setContext("context1");
+        counterDto1.setValue("0");
+
+        final CounterDTO counterDto2 = new CounterDTO();
+        counterDto2.setId("counter2-id");
+        counterDto2.setName("counter2");
+        counterDto2.setContext("context2");
+        counterDto2.setValue("0");
+
+        when(dtoFactory.createCounterDto(counter1)).thenReturn(counterDto1);
+        when(dtoFactory.createCounterDto(counter2)).thenReturn(counterDto2);
+
+        final CountersSnapshotDTO snapshotDto = new CountersSnapshotDTO();
+        snapshotDto.setCounters(Set.of(counterDto1, counterDto2));
+        when(dtoFactory.createCountersDto(any())).thenReturn(snapshotDto);
+
+        // Set up the facade
+        serviceFacade.setControllerFacade(controllerFacade);
+        serviceFacade.setDtoFactory(dtoFactory);
+
+        // Test the updateAllCounters method
+        final CountersDTO result = serviceFacade.updateAllCounters();
+
+        // Verify the result
+        assertNotNull(result);
+        assertNotNull(result.getAggregateSnapshot());
+        assertEquals(2, result.getAggregateSnapshot().getCounters().size());
+
+        // Verify that resetAllCounters was called on the controller facade
+        verify(controllerFacade, times(1)).resetAllCounters();
+
+        // Verify that DTOs were created for each counter
+        verify(dtoFactory, times(1)).createCounterDto(counter1);
+        verify(dtoFactory, times(1)).createCounterDto(counter2);
+        verify(dtoFactory, times(1)).createCountersDto(any());
+    }
+
+    @Test
+    public void testUpdateAllCountersWithEmptyCounters() {
+        // Mock ControllerFacade to return empty list
+        final ControllerFacade controllerFacade = mock(ControllerFacade.class);
+        when(controllerFacade.resetAllCounters()).thenReturn(new ArrayList<>());
+
+        // Mock DtoFactory
+        final DtoFactory dtoFactory = mock(DtoFactory.class);
+        final CountersSnapshotDTO snapshotDto = new CountersSnapshotDTO();
+        snapshotDto.setCounters(Collections.emptySet());
+        when(dtoFactory.createCountersDto(any())).thenReturn(snapshotDto);
+
+        // Set up the facade
+        serviceFacade.setControllerFacade(controllerFacade);
+        serviceFacade.setDtoFactory(dtoFactory);
+
+        // Test the updateAllCounters method
+        final CountersDTO result = serviceFacade.updateAllCounters();
+
+        // Verify the result
+        assertNotNull(result);
+        assertNotNull(result.getAggregateSnapshot());
+        assertTrue(result.getAggregateSnapshot().getCounters().isEmpty());
+
+        // Verify that resetAllCounters was called
+        verify(controllerFacade, times(1)).resetAllCounters();
+        verify(dtoFactory, times(1)).createCountersDto(any());
+    }
+
+    @Test
+    public void testClearBulletinsForComponent() {
+        final String componentId = "test-component-123";
+        final Instant fromTimestamp = Instant.now();
+
+        MockTestBulletinRepository bulletinRepository = new MockTestBulletinRepository();
+
+        // Add some test bulletins with different timestamps
+        Instant beforeTime = fromTimestamp.minusSeconds(10);
+        Instant afterTime = fromTimestamp.plusSeconds(10);
+
+        bulletinRepository.addTestBulletin(componentId, "Before message", beforeTime);
+        bulletinRepository.addTestBulletin(componentId, "At time message", fromTimestamp);
+        bulletinRepository.addTestBulletin(componentId, "After message", afterTime);
+        bulletinRepository.addTestBulletin("other-component", "Other component message", afterTime);
+
+        serviceFacade.setBulletinRepository(bulletinRepository);
+
+        ClearBulletinsResultEntity result = serviceFacade.clearBulletinsForComponent(componentId, fromTimestamp);
+
+        assertNotNull(result);
+        assertEquals(componentId, result.getComponentId());
+        assertEquals(2, result.getBulletinsCleared()); // Should clear bulletins older than or equal to fromTimestamp
+        assertEquals(2, bulletinRepository.bulletinList.size()); // 2 bulletins should remain (after time + other component)
+    }
+
+    @Test
+    public void testClearBulletinsForComponents() {
+        final String processGroupId = "test-process-group-123";
+        final Instant fromTimestamp = Instant.now();
+        final Set<String> componentIds = Set.of("component-1", "component-2");
+
+        MockTestBulletinRepository bulletinRepository = new MockTestBulletinRepository();
+
+        // Add test bulletins for multiple components
+        Instant beforeTime = fromTimestamp.minusSeconds(10);
+        Instant afterTime = fromTimestamp.plusSeconds(10);
+
+        bulletinRepository.addTestBulletin("component-1", "Component 1 before", beforeTime);
+        bulletinRepository.addTestBulletin("component-1", "Component 1 after", afterTime);
+        bulletinRepository.addTestBulletin("component-2", "Component 2 after", afterTime);
+        bulletinRepository.addTestBulletin("component-3", "Component 3 after", afterTime);
+
+        serviceFacade.setBulletinRepository(bulletinRepository);
+
+        ClearBulletinsForGroupResultsEntity result = serviceFacade.clearBulletinsForComponents(
+                processGroupId, fromTimestamp, componentIds);
+
+        assertNotNull(result);
+        assertEquals(1, result.getBulletinsCleared()); // Should clear 1 bulletin (component-1 before only)
+        assertEquals(3, bulletinRepository.bulletinList.size()); // 3 bulletins should remain (all "after" bulletins)
+    }
+
+    @Test
+    public void testClearBulletinsForComponentWithZeroResult() {
+        final String componentId = "non-existent-component";
+        final Instant fromTimestamp = Instant.now();
+
+        MockTestBulletinRepository bulletinRepository = new MockTestBulletinRepository();
+
+        // Add a bulletin for a different component
+        bulletinRepository.addTestBulletin("other-component", "Other message", Instant.now());
+
+        serviceFacade.setBulletinRepository(bulletinRepository);
+
+        ClearBulletinsResultEntity result = serviceFacade.clearBulletinsForComponent(componentId, fromTimestamp);
+
+        assertNotNull(result);
+        assertEquals(componentId, result.getComponentId());
+        assertEquals(0, result.getBulletinsCleared());
+        assertEquals(1, bulletinRepository.bulletinList.size()); // Original bulletin should remain
+    }
+
+    @Test
+    public void testClearBulletinsForComponentsWithEmptySet() {
+        final String processGroupId = "test-process-group-123";
+        final Instant fromTimestamp = Instant.now();
+        final Set<String> emptyComponentIds = Collections.emptySet();
+
+        MockTestBulletinRepository bulletinRepository = new MockTestBulletinRepository();
+        serviceFacade.setBulletinRepository(bulletinRepository);
+
+        assertThrows(IllegalArgumentException.class, () -> {
+            serviceFacade.clearBulletinsForComponents(processGroupId, fromTimestamp, emptyComponentIds);
+        });
     }
 }

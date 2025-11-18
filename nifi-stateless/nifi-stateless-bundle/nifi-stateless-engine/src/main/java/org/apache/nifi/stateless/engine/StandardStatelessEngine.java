@@ -17,23 +17,6 @@
 
 package org.apache.nifi.stateless.engine;
 
-import java.time.Duration;
-import java.time.temporal.ChronoUnit;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
-import java.util.Set;
-import java.util.UUID;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Future;
-import java.util.concurrent.TimeUnit;
-import java.util.stream.Collectors;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.nifi.asset.AssetManager;
 import org.apache.nifi.attribute.expression.language.VariableImpact;
@@ -57,8 +40,9 @@ import org.apache.nifi.controller.kerberos.KerberosConfig;
 import org.apache.nifi.controller.reporting.LogComponentStatuses;
 import org.apache.nifi.controller.repository.CounterRepository;
 import org.apache.nifi.controller.repository.FlowFileEventRepository;
+import org.apache.nifi.controller.repository.metrics.tracking.StandardStatsTracker;
+import org.apache.nifi.controller.repository.metrics.tracking.StatsTracker;
 import org.apache.nifi.controller.scheduling.LifecycleStateManager;
-import org.apache.nifi.controller.scheduling.StandardLifecycleStateManager;
 import org.apache.nifi.controller.service.ControllerServiceProvider;
 import org.apache.nifi.encrypt.PropertyEncryptor;
 import org.apache.nifi.engine.FlowEngine;
@@ -96,6 +80,24 @@ import org.apache.nifi.util.FormatUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.time.Duration;
+import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
+
 import static java.util.Objects.requireNonNull;
 
 public class StandardStatelessEngine implements StatelessEngine {
@@ -116,6 +118,7 @@ public class StandardStatelessEngine implements StatelessEngine {
     private final ProvenanceRepository provenanceRepository;
     private final ExtensionRepository extensionRepository;
     private final CounterRepository counterRepository;
+    private final LifecycleStateManager lifecycleStateManager;
     private final Duration statusTaskInterval;
     private final Duration componentEnableTimeout;
 
@@ -142,6 +145,7 @@ public class StandardStatelessEngine implements StatelessEngine {
         this.extensionRepository = requireNonNull(builder.extensionRepository, "Extension Repository must be provided");
         this.counterRepository = requireNonNull(builder.counterRepository, "Counter Repository must be provided");
         this.assetManager = requireNonNull(builder.assetManager, "Asset Manager must be provided");
+        this.lifecycleStateManager = requireNonNull(builder.lifecycleStateManager, "Lifecycle State Manager must be provided");
         this.statusTaskInterval = parseDuration(builder.statusTaskInterval);
         this.componentEnableTimeout = parseDuration(builder.componentEnableTimeout);
 
@@ -196,9 +200,10 @@ public class StandardStatelessEngine implements StatelessEngine {
         overrideParameters(parameterContextMap, parameterValueProvider);
 
         final List<ReportingTaskNode> reportingTaskNodes = createReportingTasks(dataflowDefinition);
-        final LifecycleStateManager lifecycleStateManager = new StandardLifecycleStateManager();
+        final StatsTracker statsTracker = new StandardStatsTracker(() -> 0, 0);
         final StandardStatelessFlow dataflow = new StandardStatelessFlow(childGroup, reportingTaskNodes, controllerServiceProvider, processContextFactory,
-            repositoryContextFactory, dataflowDefinition, stateManagerProvider, processScheduler, bulletinRepository, lifecycleStateManager, componentEnableTimeout);
+            repositoryContextFactory, dataflowDefinition, stateManagerProvider, processScheduler, bulletinRepository, lifecycleStateManager, componentEnableTimeout,
+            statsTracker);
 
         if (statusTaskInterval != null) {
             final LogComponentStatuses logComponentStatuses = new LogComponentStatuses(flowFileEventRepository, counterRepository, flowManager);
@@ -452,7 +457,7 @@ public class StandardStatelessEngine implements StatelessEngine {
 
     private BundleCoordinate determineBundleCoordinate(final ConfigurableExtensionDefinition extensionDefinition, final String extensionType) {
         final String explicitCoordinates = extensionDefinition.getBundleCoordinates();
-        if (explicitCoordinates != null && !explicitCoordinates.trim().isEmpty()) {
+        if (explicitCoordinates != null && !explicitCoordinates.isBlank()) {
             final String resolvedClassName = resolveExtensionClassName(extensionDefinition, extensionType);
             extensionDefinition.setType(resolvedClassName);
 
@@ -684,6 +689,7 @@ public class StandardStatelessEngine implements StatelessEngine {
         private CounterRepository counterRepository = null;
         private String statusTaskInterval = null;
         private String componentEnableTimeout = null;
+        private LifecycleStateManager lifecycleStateManager = null;
         private AssetManager assetManager = null;
 
         public Builder extensionManager(final ExtensionManager extensionManager) {
@@ -751,13 +757,18 @@ public class StandardStatelessEngine implements StatelessEngine {
             return this;
         }
 
+        public Builder lifecycleStateManager(final LifecycleStateManager lifecycleStateManager) {
+            this.lifecycleStateManager = lifecycleStateManager;
+            return this;
+        }
+
         public StandardStatelessEngine build() {
             return new StandardStatelessEngine(this);
         }
     }
 
     static Duration parseDuration(final String durationValue) {
-        if (durationValue == null || durationValue.trim().isEmpty()) {
+        if (durationValue == null || durationValue.isBlank()) {
             return null;
         }
 

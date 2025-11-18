@@ -29,7 +29,6 @@ public interface FlowEnrichService {
      * Responsible for enriching a VersionedDataflow instance
      *
      * @param versionedDataflow a VersionedDataflow instance
-     * @return VersionedDataflow the enriched flow instance
      */
-    VersionedDataflow enrichFlow(VersionedDataflow versionedDataflow);
+    void enrichFlow(VersionedDataflow versionedDataflow);
 }

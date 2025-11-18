@@ -38,6 +38,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -600,19 +601,18 @@ public class PutMongoIT extends MongoWriteTestBase {
         upsertOutput.assertAttributeEquals(PutMongo.ATTRIBUTE_UPSERT_ID, "Test");
 
         // test next flow files for update attributes
-        for (int i = 0; i < flowFilesForRelationship.size(); i++) {
-            flowFilesForRelationship.get(i).assertAttributeNotExists(PutMongo.ATTRIBUTE_UPSERT_ID);
-            flowFilesForRelationship.get(i).assertAttributeEquals(PutMongo.ATTRIBUTE_UPDATE_MATCH_COUNT, String.valueOf(1));
-            flowFilesForRelationship.get(i).assertAttributeEquals(PutMongo.ATTRIBUTE_UPDATE_MODIFY_COUNT, String.valueOf(1));
+        for (MockFlowFile flowFile : flowFilesForRelationship) {
+            flowFile.assertAttributeNotExists(PutMongo.ATTRIBUTE_UPSERT_ID);
+            flowFile.assertAttributeEquals(PutMongo.ATTRIBUTE_UPDATE_MATCH_COUNT, String.valueOf(1));
+            flowFile.assertAttributeEquals(PutMongo.ATTRIBUTE_UPDATE_MODIFY_COUNT, String.valueOf(1));
         }
 
         Document query = new Document("_id", "Test");
         Document result = collection.find(query).first();
-        List array = (List) result.get("testArr");
+        List<Document> array = (List<Document>) result.get("testArr");
         assertNotNull(array, "Array was empty");
         assertEquals(3, array.size(), "Wrong size");
-        for (int index = 0; index < array.size(); index++) {
-            Document doc = (Document) array.get(index);
+        for (Document doc : array) {
             String msg = doc.getString("msg");
             assertNotNull(msg, "Msg was null");
             assertEquals(msg, "Hi", "Msg had wrong value");
@@ -685,5 +685,42 @@ public class PutMongoIT extends MongoWriteTestBase {
             assertEquals(1, collection.countDocuments(query), "Count was wrong");
             runner.clearTransferState();
         }
+    }
+    @Test
+    public void testUpdateKey_IdVariousTypes() throws Exception {
+        TestRunner runner = init(PutMongo.class);
+
+        runner.setProperty(PutMongo.UPDATE_OPERATION_MODE, PutMongo.UPDATE_WITH_OPERATORS);
+        runner.setProperty(PutMongo.MODE, PutMongo.MODE_UPDATE);
+        runner.setProperty(PutMongo.UPSERT, "true");
+        runner.setProperty(PutMongo.UPDATE_QUERY_KEY, "_id");
+
+        Document docId = new Document("a", 1);
+        Integer numericId = 42;
+
+        List<Document> updates = List.of(
+                new Document(Map.of("_id", docId, "$set", Map.of("v", 1))),
+                new Document(Map.of("_id", numericId, "$set", Map.of("v", 3)))
+        );
+
+        for (Document update : updates) {
+            runner.enqueue(update.toJson());
+        }
+        runner.run(updates.size(), true, true);
+
+        runner.assertTransferCount(PutMongo.REL_FAILURE, 0);
+        runner.assertTransferCount(PutMongo.REL_SUCCESS, updates.size());
+
+        // Verify _id Document preserved
+        Document r1 = collection.find(new Document("_id", docId)).first();
+        assertNotNull(r1);
+        assertInstanceOf(Document.class, r1.get("_id"));
+        assertEquals(docId, r1.get("_id"));
+
+        // Verify _id Number preserved
+        Document r3 = collection.find(new Document("_id", numericId)).first();
+        assertNotNull(r3);
+        assertInstanceOf(Integer.class, r3.get("_id"));
+        assertEquals(numericId, r3.get("_id"));
     }
 }

@@ -85,7 +85,7 @@ import {
     selectCurrentParameterContext,
     selectCurrentProcessGroupId,
     selectCurrentProcessGroupRevision,
-    selectFlowLoadingStatus,
+    selectHasFlowData,
     selectInputPort,
     selectMaxZIndex,
     selectOutputPort,
@@ -114,7 +114,6 @@ import { Router } from '@angular/router';
 import { Client } from '../../../../service/client.service';
 import { CanvasUtils } from '../../service/canvas-utils.service';
 import { CanvasView } from '../../service/canvas-view.service';
-import { selectProcessorTypes } from '../../../../state/extension-types/extension-types.selectors';
 import { NiFiState } from '../../../../state';
 import { CreateProcessor } from '../../ui/canvas/items/processor/create-processor/create-processor.component';
 import { EditProcessor } from '../../ui/canvas/items/processor/edit-processor/edit-processor.component';
@@ -181,34 +180,34 @@ import { ParameterContextService } from '../../../parameter-contexts/service/par
 
 @Injectable()
 export class FlowEffects {
+    private actions$ = inject(Actions);
+    private store = inject<Store<NiFiState>>(Store);
+    private storage = inject(Storage);
+    private flowService = inject(FlowService);
+    private controllerServiceService = inject(ControllerServiceService);
+    private registryService = inject(RegistryService);
+    private client = inject(Client);
+    private canvasUtils = inject(CanvasUtils);
+    private canvasView = inject(CanvasView);
+    private birdseyeView = inject(BirdseyeView);
+    private connectionManager = inject(ConnectionManager);
+    private clusterConnectionService = inject(ClusterConnectionService);
+    private snippetService = inject(SnippetService);
+    private router = inject(Router);
+    private dialog = inject(MatDialog);
+    private propertyTableHelperService = inject(PropertyTableHelperService);
+    private parameterHelperService = inject(ParameterHelperService);
+    private parameterContextService = inject(ParameterContextService);
+    private extensionTypesService = inject(ExtensionTypesService);
+    private errorHelper = inject(ErrorHelper);
+    private copyPasteService = inject(CopyPasteService);
+
     private createProcessGroupDialogRef: MatDialogRef<CreateProcessGroup, any> | undefined;
     private editProcessGroupDialogRef: MatDialogRef<EditProcessGroup, any> | undefined;
     private destroyRef = inject(DestroyRef);
     private lastReload: number = 0;
 
-    constructor(
-        private actions$: Actions,
-        private store: Store<NiFiState>,
-        private storage: Storage,
-        private flowService: FlowService,
-        private controllerServiceService: ControllerServiceService,
-        private registryService: RegistryService,
-        private client: Client,
-        private canvasUtils: CanvasUtils,
-        private canvasView: CanvasView,
-        private birdseyeView: BirdseyeView,
-        private connectionManager: ConnectionManager,
-        private clusterConnectionService: ClusterConnectionService,
-        private snippetService: SnippetService,
-        private router: Router,
-        private dialog: MatDialog,
-        private propertyTableHelperService: PropertyTableHelperService,
-        private parameterHelperService: ParameterHelperService,
-        private parameterContextService: ParameterContextService,
-        private extensionTypesService: ExtensionTypesService,
-        private errorHelper: ErrorHelper,
-        private copyPasteService: CopyPasteService
-    ) {
+    constructor() {
         this.store
             .select(selectDocumentVisibilityState)
             .pipe(
@@ -250,11 +249,11 @@ export class FlowEffects {
             ofType(FlowActions.loadProcessGroup),
             map((action) => action.request),
             concatLatestFrom(() => [
-                this.store.select(selectFlowLoadingStatus),
+                this.store.select(selectHasFlowData),
                 this.store.select(selectConnectedStateChanged)
             ]),
             tap(() => this.store.dispatch(resetConnectedStateChanged())),
-            switchMap(([request, status, connectedStateChanged]) =>
+            switchMap(([request, hasFlowData, connectedStateChanged]) =>
                 combineLatest([
                     this.flowService.getFlow(request.id),
                     this.flowService.getFlowStatus(),
@@ -275,7 +274,7 @@ export class FlowEffects {
                         });
                     }),
                     catchError((errorResponse: HttpErrorResponse) =>
-                        of(this.errorHelper.handleLoadingError(status, errorResponse))
+                        of(this.errorHelper.handleLoadingError(hasFlowData, errorResponse))
                     )
                 )
             )
@@ -384,14 +383,12 @@ export class FlowEffects {
             this.actions$.pipe(
                 ofType(FlowActions.openNewProcessorDialog),
                 map((action) => action.request),
-                concatLatestFrom(() => this.store.select(selectProcessorTypes)),
-                tap(([request, processorTypes]) => {
+                tap((request) => {
                     this.dialog
                         .open(CreateProcessor, {
                             ...LARGE_DIALOG,
                             data: {
-                                request,
-                                processorTypes
+                                request
                             }
                         })
                         .afterClosed()
@@ -2933,10 +2930,15 @@ export class FlowEffects {
                 map((action) => action.request),
                 concatLatestFrom(() => this.store.select(selectCurrentProcessGroupId)),
                 tap(([request, currentProcessGroupId]) => {
+                    let type: string = request.type;
+                    if (request.type === ComponentType.ControllerService) {
+                        type = 'controller-services';
+                    }
+
                     if (request.processGroupId) {
-                        this.router.navigate(['/process-groups', request.processGroupId, request.type, request.id]);
+                        this.router.navigate(['/process-groups', request.processGroupId, type, request.id]);
                     } else {
-                        this.router.navigate(['/process-groups', currentProcessGroupId, request.type, request.id]);
+                        this.router.navigate(['/process-groups', currentProcessGroupId, type, request.id]);
                     }
                 })
             ),
@@ -4615,5 +4617,72 @@ export class FlowEffects {
                 })
             ),
         { dispatch: false }
+    );
+
+    /*
+        Clear Bulletins Effects
+    */
+
+    clearBulletinsForComponent$ = createEffect(() =>
+        this.actions$.pipe(
+            ofType(FlowActions.clearBulletinsForComponent),
+            map((action) => action.request),
+            switchMap((request) =>
+                from(this.flowService.clearBulletinForComponent(request)).pipe(
+                    map((response) =>
+                        FlowActions.clearBulletinsForComponentSuccess({
+                            response: {
+                                componentId: response.componentId,
+                                bulletinsCleared: response.bulletinsCleared,
+                                bulletins: response.bulletins || [],
+                                componentType: request.componentType
+                            }
+                        })
+                    ),
+                    catchError((errorResponse: HttpErrorResponse) => of(this.snackBarOrFullScreenError(errorResponse)))
+                )
+            )
+        )
+    );
+
+    clearBulletinsForProcessGroup$ = createEffect(() =>
+        this.actions$.pipe(
+            ofType(FlowActions.clearBulletinsForProcessGroup),
+            map((action) => action.request),
+            switchMap((request) =>
+                from(this.flowService.clearBulletinsForProcessGroup(request)).pipe(
+                    map((response) =>
+                        FlowActions.clearBulletinsForProcessGroupSuccess({
+                            response: {
+                                processGroupId: request.processGroupId,
+                                bulletinsCleared: response.bulletinsCleared
+                            }
+                        })
+                    ),
+                    catchError((errorResponse: HttpErrorResponse) => of(this.snackBarOrFullScreenError(errorResponse)))
+                )
+            )
+        )
+    );
+
+    clearBulletinsForProcessGroupSuccess$ = createEffect(() =>
+        this.actions$.pipe(
+            ofType(FlowActions.clearBulletinsForProcessGroupSuccess),
+            map((action) => action.response),
+            concatLatestFrom(() => this.store.select(selectCurrentProcessGroupId)),
+            switchMap(([response, currentProcessGroupId]) => {
+                // If we cleared bulletins for the currently viewed process group, reload the entire flow
+                if (response.processGroupId === currentProcessGroupId) {
+                    return of(FlowActions.reloadFlow());
+                } else {
+                    // If it's a child process group visible on the canvas, reload just that child
+                    return of(
+                        FlowActions.loadChildProcessGroup({
+                            request: { id: response.processGroupId }
+                        })
+                    );
+                }
+            })
+        )
     );
 }

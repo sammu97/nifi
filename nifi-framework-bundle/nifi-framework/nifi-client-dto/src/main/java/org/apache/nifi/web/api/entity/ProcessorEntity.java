@@ -31,6 +31,7 @@ public class ProcessorEntity extends ComponentEntity implements Permissible<Proc
 
     private ProcessorDTO component;
     private String inputRequirement;
+    private String physicalState;
     private ProcessorStatusDTO status;
     private PermissionsDTO operatePermissions;
 
@@ -39,10 +40,12 @@ public class ProcessorEntity extends ComponentEntity implements Permissible<Proc
      *
      * @return The ProcessorDTO object
      */
+    @Override
     public ProcessorDTO getComponent() {
         return component;
     }
 
+    @Override
     public void setComponent(ProcessorDTO component) {
         this.component = component;
     }
@@ -72,6 +75,20 @@ public class ProcessorEntity extends ComponentEntity implements Permissible<Proc
     public void setInputRequirement(String inputRequirement) {
         this.inputRequirement = inputRequirement;
     }
+
+    /**
+     * @return the physical state of this processor
+     */
+    @Schema(description = "The physical state of the processor, including transition states",
+            allowableValues = {"RUNNING", "STOPPED", "DISABLED", "STARTING", "STOPPING", "RUN_ONCE"})
+    public String getPhysicalState() {
+        return physicalState;
+    }
+
+    public void setPhysicalState(String physicalState) {
+        this.physicalState = physicalState;
+    }
+
 
     /**
      * @return The permissions for this component operations

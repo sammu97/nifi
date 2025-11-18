@@ -16,7 +16,7 @@
  */
 package org.apache.nifi.toolkit.cli.impl.result.registry;
 
-import org.apache.nifi.extension.TagCount;
+import org.apache.nifi.registry.extension.component.TagCount;
 import org.apache.nifi.toolkit.cli.api.ResultType;
 import org.apache.nifi.toolkit.cli.impl.result.AbstractWritableResult;
 import org.apache.nifi.toolkit.cli.impl.result.writer.DynamicTableWriter;
@@ -48,8 +48,7 @@ public class TagCountResult extends AbstractWritableResult<List<TagCount>> {
                 .column("Count", 5, 20, false)
                 .build();
 
-        for (int i = 0; i < tagCounts.size(); ++i) {
-            final TagCount tagCount = tagCounts.get(i);
+        for (final TagCount tagCount : tagCounts) {
             table.addRow(tagCount.getTag(), String.valueOf(tagCount.getCount()));
         }
 

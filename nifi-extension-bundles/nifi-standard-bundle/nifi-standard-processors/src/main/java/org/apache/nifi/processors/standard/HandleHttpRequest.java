@@ -26,6 +26,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.servlet.http.Part;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.Strings;
 import org.apache.nifi.annotation.behavior.InputRequirement;
 import org.apache.nifi.annotation.behavior.InputRequirement.Requirement;
 import org.apache.nifi.annotation.behavior.WritesAttribute;
@@ -43,6 +44,7 @@ import org.apache.nifi.expression.ExpressionLanguageScope;
 import org.apache.nifi.flowfile.FlowFile;
 import org.apache.nifi.http.HttpContextMap;
 import org.apache.nifi.jetty.configuration.connector.StandardServerConnectorFactory;
+import org.apache.nifi.migration.PropertyConfiguration;
 import org.apache.nifi.processor.AbstractProcessor;
 import org.apache.nifi.processor.DataUnit;
 import org.apache.nifi.processor.ProcessContext;
@@ -59,8 +61,8 @@ import org.apache.nifi.scheduling.ExecutionNode;
 import org.apache.nifi.ssl.RestrictedSSLContextService;
 import org.apache.nifi.ssl.SSLContextProvider;
 import org.apache.nifi.stream.io.StreamUtils;
-import org.eclipse.jetty.ee10.servlet.ServletContextHandler;
-import org.eclipse.jetty.ee10.servlet.ServletContextRequest;
+import org.eclipse.jetty.ee11.servlet.ServletContextHandler;
+import org.eclipse.jetty.ee11.servlet.ServletContextRequest;
 import org.eclipse.jetty.server.Connector;
 import org.eclipse.jetty.server.Server;
 import org.eclipse.jetty.server.ServerConnector;
@@ -259,7 +261,6 @@ public class HandleHttpRequest extends AbstractProcessor {
             .build();
     public static final PropertyDescriptor MAXIMUM_THREADS = new PropertyDescriptor.Builder()
             .name("Maximum Threads")
-            .displayName("Maximum Threads")
             .description("The maximum number of threads that the embedded HTTP server will use for handling requests.")
             .required(true)
             .defaultValue("200")
@@ -280,8 +281,7 @@ public class HandleHttpRequest extends AbstractProcessor {
             .expressionLanguageSupported(ExpressionLanguageScope.NONE)
             .build();
     public static final PropertyDescriptor PARAMETERS_TO_ATTRIBUTES = new PropertyDescriptor.Builder()
-            .name("parameters-to-attributes")
-            .displayName("Parameters to Attributes List")
+            .name("Parameters to Attributes")
             .description("A comma-separated list of HTTP parameters or form data to output as attributes")
             .required(false)
             .addValidator(StandardValidators.NON_EMPTY_VALIDATOR)
@@ -296,12 +296,11 @@ public class HandleHttpRequest extends AbstractProcessor {
             .defaultValue(CLIENT_NONE.getValue())
             .build();
     public static final PropertyDescriptor CONTAINER_QUEUE_SIZE = new PropertyDescriptor.Builder()
-            .name("container-queue-size").displayName("Container Queue Size")
+            .name("Container Queue Size")
             .description("The size of the queue for Http Request Containers").required(true)
             .addValidator(StandardValidators.POSITIVE_INTEGER_VALIDATOR).defaultValue("50").build();
     public static final PropertyDescriptor MULTIPART_REQUEST_MAX_SIZE = new PropertyDescriptor.Builder()
-            .name("multipart-request-max-size")
-            .displayName("Multipart Request Max Size")
+            .name("Multipart Request Max Size")
             .description("The max size of the request. Only applies for requests with Content-Type: multipart/form-data, "
                     + "and is used to prevent denial of service type of attacks, to prevent filling up the heap or disk space")
             .required(true)
@@ -309,11 +308,10 @@ public class HandleHttpRequest extends AbstractProcessor {
             .defaultValue("1 MB")
             .build();
     public static final PropertyDescriptor MULTIPART_READ_BUFFER_SIZE = new PropertyDescriptor.Builder()
-            .name("multipart-read-buffer-size")
             .description("The threshold size, at which the contents of an incoming file would be written to disk. "
                     + "Only applies for requests with Content-Type: multipart/form-data. "
                     + "It is used to prevent denial of service type of attacks, to prevent filling up the heap or disk space.")
-            .displayName("Multipart Read Buffer Size")
+            .name("Multipart Read Buffer Size")
             .required(true)
             .addValidator(StandardValidators.DATA_SIZE_VALIDATOR)
             .defaultValue("512 KB")
@@ -612,7 +610,7 @@ public class HandleHttpRequest extends AbstractProcessor {
         final long start = System.nanoTime();
         final HttpServletRequest request = container.getRequest();
 
-        if (StringUtils.contains(request.getContentType(), MIME_TYPE__MULTIPART_FORM_DATA)) {
+        if (Strings.CS.contains(request.getContentType(), MIME_TYPE__MULTIPART_FORM_DATA)) {
           final long requestMaxSize = context.getProperty(MULTIPART_REQUEST_MAX_SIZE).asDataSize(DataUnit.B).longValue();
           final int readBufferSize = context.getProperty(MULTIPART_READ_BUFFER_SIZE).asDataSize(DataUnit.B).intValue();
           String tempDir = System.getProperty("java.io.tmpdir");
@@ -668,6 +666,14 @@ public class HandleHttpRequest extends AbstractProcessor {
           if (requestRegistrationSuccess)
             forwardFlowFile(session, start, request, flowFile);
         }
+    }
+
+    @Override
+    public void migrateProperties(PropertyConfiguration config) {
+        config.renameProperty("parameters-to-attributes", PARAMETERS_TO_ATTRIBUTES.getName());
+        config.renameProperty("container-queue-size", CONTAINER_QUEUE_SIZE.getName());
+        config.renameProperty("multipart-request-max-size", MULTIPART_REQUEST_MAX_SIZE.getName());
+        config.renameProperty("multipart-read-buffer-size", MULTIPART_READ_BUFFER_SIZE.getName());
     }
 
     private FlowFile savePartAttributes(ProcessSession session, Part part, FlowFile flowFile, final int i, final int allPartsCount) {

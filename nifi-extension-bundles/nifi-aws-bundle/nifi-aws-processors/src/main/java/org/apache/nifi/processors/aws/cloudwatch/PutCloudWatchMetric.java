@@ -16,7 +16,6 @@
  */
 package org.apache.nifi.processors.aws.cloudwatch;
 
-import com.amazonaws.AmazonClientException;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.nifi.annotation.behavior.DynamicProperty;
 import org.apache.nifi.annotation.behavior.InputRequirement;
@@ -31,12 +30,13 @@ import org.apache.nifi.components.Validator;
 import org.apache.nifi.expression.AttributeExpression;
 import org.apache.nifi.expression.ExpressionLanguageScope;
 import org.apache.nifi.flowfile.FlowFile;
+import org.apache.nifi.migration.PropertyConfiguration;
 import org.apache.nifi.processor.ProcessContext;
 import org.apache.nifi.processor.ProcessSession;
 import org.apache.nifi.processor.Relationship;
 import org.apache.nifi.processor.exception.ProcessException;
 import org.apache.nifi.processor.util.StandardValidators;
-import org.apache.nifi.processors.aws.v2.AbstractAwsSyncProcessor;
+import org.apache.nifi.processors.aws.AbstractAwsSyncProcessor;
 import software.amazon.awssdk.services.cloudwatch.CloudWatchClient;
 import software.amazon.awssdk.services.cloudwatch.CloudWatchClientBuilder;
 import software.amazon.awssdk.services.cloudwatch.model.Dimension;
@@ -55,6 +55,9 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
+
+import static org.apache.nifi.processors.aws.region.RegionUtil.CUSTOM_REGION;
+import static org.apache.nifi.processors.aws.region.RegionUtil.REGION;
 
 @SupportsBatching
 @InputRequirement(Requirement.INPUT_REQUIRED)
@@ -105,7 +108,6 @@ public class PutCloudWatchMetric extends AbstractAwsSyncProcessor<CloudWatchClie
 
     public static final PropertyDescriptor NAMESPACE = new PropertyDescriptor.Builder()
             .name("Namespace")
-            .displayName("Namespace")
             .description("The namespace for the metric data for CloudWatch")
             .required(true)
             .expressionLanguageSupported(ExpressionLanguageScope.FLOWFILE_ATTRIBUTES)
@@ -113,8 +115,7 @@ public class PutCloudWatchMetric extends AbstractAwsSyncProcessor<CloudWatchClie
             .build();
 
     public static final PropertyDescriptor METRIC_NAME = new PropertyDescriptor.Builder()
-            .name("MetricName")
-            .displayName("Metric Name")
+            .name("Metric Name")
             .description("The name of the metric")
             .expressionLanguageSupported(ExpressionLanguageScope.FLOWFILE_ATTRIBUTES)
             .required(true)
@@ -123,7 +124,6 @@ public class PutCloudWatchMetric extends AbstractAwsSyncProcessor<CloudWatchClie
 
     public static final PropertyDescriptor VALUE = new PropertyDescriptor.Builder()
             .name("Value")
-            .displayName("Value")
             .description("The value for the metric. Must be a double")
             .expressionLanguageSupported(ExpressionLanguageScope.FLOWFILE_ATTRIBUTES)
             .required(false)
@@ -132,7 +132,6 @@ public class PutCloudWatchMetric extends AbstractAwsSyncProcessor<CloudWatchClie
 
     public static final PropertyDescriptor TIMESTAMP = new PropertyDescriptor.Builder()
             .name("Timestamp")
-            .displayName("Timestamp")
             .description("A point in time expressed as the number of milliseconds since Jan 1, 1970 00:00:00 UTC. If not specified, the default value is set to the time the metric data was received")
             .expressionLanguageSupported(ExpressionLanguageScope.FLOWFILE_ATTRIBUTES)
             .required(false)
@@ -141,7 +140,6 @@ public class PutCloudWatchMetric extends AbstractAwsSyncProcessor<CloudWatchClie
 
     public static final PropertyDescriptor UNIT = new PropertyDescriptor.Builder()
             .name("Unit")
-            .displayName("Unit")
             .description("The unit of the metric. (e.g Seconds, Bytes, Megabytes, Percent, Count,  Kilobytes/Second, Terabits/Second, Count/Second) For details see http://docs.aws.amazon.com/AmazonCloudWatch/latest/APIReference/API_MetricDatum.html")
             .expressionLanguageSupported(ExpressionLanguageScope.FLOWFILE_ATTRIBUTES)
             .required(false)
@@ -149,8 +147,7 @@ public class PutCloudWatchMetric extends AbstractAwsSyncProcessor<CloudWatchClie
             .build();
 
     public static final PropertyDescriptor MAXIMUM = new PropertyDescriptor.Builder()
-            .name("maximum")
-            .displayName("Maximum")
+            .name("Maximum")
             .description("The maximum value of the sample set. Must be a double")
             .expressionLanguageSupported(ExpressionLanguageScope.FLOWFILE_ATTRIBUTES)
             .required(false)
@@ -158,8 +155,7 @@ public class PutCloudWatchMetric extends AbstractAwsSyncProcessor<CloudWatchClie
             .build();
 
     public static final PropertyDescriptor MINIMUM = new PropertyDescriptor.Builder()
-            .name("minimum")
-            .displayName("Minimum")
+            .name("Minimum")
             .description("The minimum value of the sample set. Must be a double")
             .expressionLanguageSupported(ExpressionLanguageScope.FLOWFILE_ATTRIBUTES)
             .required(false)
@@ -167,8 +163,7 @@ public class PutCloudWatchMetric extends AbstractAwsSyncProcessor<CloudWatchClie
             .build();
 
     public static final PropertyDescriptor SAMPLECOUNT = new PropertyDescriptor.Builder()
-            .name("sampleCount")
-            .displayName("Sample Count")
+            .name("Sample Count")
             .description("The number of samples used for the statistic set. Must be a double")
             .expressionLanguageSupported(ExpressionLanguageScope.FLOWFILE_ATTRIBUTES)
             .required(false)
@@ -176,8 +171,7 @@ public class PutCloudWatchMetric extends AbstractAwsSyncProcessor<CloudWatchClie
             .build();
 
     public static final PropertyDescriptor SUM = new PropertyDescriptor.Builder()
-            .name("sum")
-            .displayName("Sum")
+            .name("Sum")
             .description("The sum of values for the sample set. Must be a double")
             .expressionLanguageSupported(ExpressionLanguageScope.FLOWFILE_ATTRIBUTES)
             .required(false)
@@ -188,6 +182,7 @@ public class PutCloudWatchMetric extends AbstractAwsSyncProcessor<CloudWatchClie
         NAMESPACE,
         METRIC_NAME,
         REGION,
+        CUSTOM_REGION,
         AWS_CREDENTIALS_PROVIDER_SERVICE,
         VALUE,
         MAXIMUM,
@@ -239,6 +234,16 @@ public class PutCloudWatchMetric extends AbstractAwsSyncProcessor<CloudWatchClie
     @Override
     public Set<Relationship> getRelationships() {
         return RELATIONSHIPS;
+    }
+
+    @Override
+    public void migrateProperties(PropertyConfiguration config) {
+        super.migrateProperties(config);
+        config.renameProperty("MetricName", METRIC_NAME.getName());
+        config.renameProperty("maximum", MAXIMUM.getName());
+        config.renameProperty("minimum", MINIMUM.getName());
+        config.renameProperty("sampleCount", SAMPLECOUNT.getName());
+        config.renameProperty("sum", SUM.getName());
     }
 
     @Override
@@ -341,7 +346,7 @@ public class PutCloudWatchMetric extends AbstractAwsSyncProcessor<CloudWatchClie
 
     }
 
-    protected PutMetricDataResponse putMetricData(final ProcessContext context, final PutMetricDataRequest metricDataRequest) throws AmazonClientException {
+    protected PutMetricDataResponse putMetricData(final ProcessContext context, final PutMetricDataRequest metricDataRequest) {
         final CloudWatchClient client = getClient(context);
         final PutMetricDataResponse result = client.putMetricData(metricDataRequest);
         return result;

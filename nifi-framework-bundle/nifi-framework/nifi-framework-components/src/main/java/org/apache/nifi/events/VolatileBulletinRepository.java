@@ -23,6 +23,7 @@ import org.apache.nifi.reporting.ComponentType;
 import org.apache.nifi.util.RingBuffer;
 import org.apache.nifi.util.RingBuffer.Filter;
 
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -282,36 +283,23 @@ public class VolatileBulletinRepository implements BulletinRepository {
     }
 
     private String getBulletinStoreKey(final Bulletin bulletin) {
-        switch (bulletin.getSourceType()) {
-            case FLOW_CONTROLLER:
-                return CONTROLLER_BULLETIN_STORE_KEY;
-            case CONTROLLER_SERVICE:
-                return SERVICE_BULLETIN_STORE_KEY;
-            case REPORTING_TASK:
-                return REPORTING_TASK_BULLETIN_STORE_KEY;
-            case FLOW_ANALYSIS_RULE:
-                return FLOW_ANALYSIS_RULE_BULLETIN_STORE_KEY;
-            case PARAMETER_PROVIDER:
-                return PARAMETER_PROVIDER_BULLETIN_STORE_KEY;
-            case FLOW_REGISTRY_CLIENT:
-                return FLOW_REGISTRY_CLIENT_STORE_KEY;
-            default:
-                return bulletin.getGroupId();
-        }
+        return switch (bulletin.getSourceType()) {
+            case FLOW_CONTROLLER -> CONTROLLER_BULLETIN_STORE_KEY;
+            case CONTROLLER_SERVICE -> SERVICE_BULLETIN_STORE_KEY;
+            case REPORTING_TASK -> REPORTING_TASK_BULLETIN_STORE_KEY;
+            case FLOW_ANALYSIS_RULE -> FLOW_ANALYSIS_RULE_BULLETIN_STORE_KEY;
+            case PARAMETER_PROVIDER -> PARAMETER_PROVIDER_BULLETIN_STORE_KEY;
+            case FLOW_REGISTRY_CLIENT -> FLOW_REGISTRY_CLIENT_STORE_KEY;
+            default -> bulletin.getGroupId();
+        };
     }
 
     private boolean isControllerBulletin(final Bulletin bulletin) {
-        switch (bulletin.getSourceType()) {
-            case FLOW_CONTROLLER:
-            case CONTROLLER_SERVICE:
-            case REPORTING_TASK:
-            case FLOW_ANALYSIS_RULE:
-            case PARAMETER_PROVIDER:
-            case FLOW_REGISTRY_CLIENT:
-                return true;
-            default:
-                return false;
-        }
+        return switch (bulletin.getSourceType()) {
+            case FLOW_CONTROLLER, CONTROLLER_SERVICE, REPORTING_TASK, FLOW_ANALYSIS_RULE, PARAMETER_PROVIDER,
+                 FLOW_REGISTRY_CLIENT -> true;
+            default -> false;
+        };
     }
 
     private class DefaultBulletinProcessingStrategy implements BulletinProcessingStrategy {
@@ -322,5 +310,53 @@ public class VolatileBulletinRepository implements BulletinRepository {
                 bulletinBuffer.add(bulletin);
             }
         }
+    }
+
+    @Override
+    public int clearBulletinsForComponent(final String sourceId, final Instant fromTimestamp) throws IllegalArgumentException {
+        if (sourceId == null) {
+            throw new IllegalArgumentException("Source ID cannot be null");
+        }
+
+        return clearBulletinsForComponents(Collections.singleton(sourceId), fromTimestamp);
+    }
+
+    @Override
+    public int clearBulletinsForComponents(Collection<String> sourceIds, Instant fromTimestamp) throws IllegalArgumentException {
+        if (sourceIds == null || sourceIds.isEmpty()) {
+            throw new IllegalArgumentException("Source IDs cannot be null or empty");
+        }
+
+        if (fromTimestamp == null) {
+            throw new IllegalArgumentException("From timestamp cannot be null");
+        }
+
+        int totalCleared = 0;
+
+        // Create filter to match bulletins for any of the given sourceIds and at or before fromTimestamp
+        final Filter<Bulletin> clearFilter = bulletin -> {
+            // Match any of the source IDs
+            if (!sourceIds.contains(bulletin.getSourceId())) {
+                return false;
+            }
+
+            // Clear bulletins that are older than or equal to the specified timestamp
+            // Convert bulletin timestamp (Date) to Instant for comparison
+            return bulletin.getTimestamp() != null && !bulletin.getTimestamp().toInstant().isAfter(fromTimestamp);
+        };
+
+        // Iterate through all bulletin stores to find and clear matching bulletins
+        for (final ConcurrentMap<String, RingBuffer<Bulletin>> componentMap : bulletinStoreMap.values()) {
+            for (final RingBuffer<Bulletin> ringBuffer : componentMap.values()) {
+                // Count how many bulletins would be cleared first
+                final int countToRemove = ringBuffer.countSelectedElements(clearFilter);
+                totalCleared += countToRemove;
+
+                // Remove the bulletins
+                ringBuffer.removeSelectedElements(clearFilter);
+            }
+        }
+
+        return totalCleared;
     }
 }

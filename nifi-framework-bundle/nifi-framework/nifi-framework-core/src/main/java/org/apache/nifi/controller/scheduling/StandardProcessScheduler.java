@@ -45,6 +45,7 @@ import org.apache.nifi.controller.service.StandardConfigurationContext;
 import org.apache.nifi.engine.FlowEngine;
 import org.apache.nifi.flow.ExecutionEngine;
 import org.apache.nifi.groups.StatelessGroupNode;
+import org.apache.nifi.lifecycle.ProcessorStopLifecycleMethods;
 import org.apache.nifi.logging.ComponentLog;
 import org.apache.nifi.logging.StandardLoggingContext;
 import org.apache.nifi.nar.NarCloseable;
@@ -74,6 +75,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Supplier;
 
@@ -124,6 +126,15 @@ public final class StandardProcessScheduler implements ProcessScheduler {
         return stateManagerProvider.getStateManager(componentId);
     }
 
+    private StateManager getStateManager(final String componentId, final Class<?> componentClass) {
+        return stateManagerProvider.getStateManager(componentId, componentClass);
+    }
+
+    private StateManager getStateManager(final ProcessorNode procNode) {
+        final Class<?> componentClass = procNode.getProcessor() == null ? null : procNode.getProcessor().getClass();
+        return getStateManager(procNode.getIdentifier(), componentClass);
+    }
+
     public void scheduleFrameworkTask(final Runnable task, final String taskName, final long initialDelay, final long delay, final TimeUnit timeUnit) {
         Thread.ofVirtual()
             .name(taskName)
@@ -161,6 +172,7 @@ public final class StandardProcessScheduler implements ProcessScheduler {
      *
      * @param task the task to perform
      */
+    @Override
     public Future<?> submitFrameworkTask(final Runnable task) {
         final CompletableFuture<?> future = new CompletableFuture<>();
 
@@ -291,7 +303,7 @@ public final class StandardProcessScheduler implements ProcessScheduler {
                     }
                 } catch (final Exception e) {
                     final Throwable cause = e instanceof InvocationTargetException ? e.getCause() : e;
-                    final ComponentLog componentLog = new SimpleProcessLogger(reportingTask.getIdentifier(), reportingTask, new StandardLoggingContext(null));
+                    final ComponentLog componentLog = new SimpleProcessLogger(reportingTask.getIdentifier(), reportingTask, new StandardLoggingContext());
                     componentLog.error("Failed to invoke @OnScheduled method due to {}", cause);
 
                     LOG.error("Failed to invoke the On-Scheduled Lifecycle methods of {} due to {}; administratively yielding this "
@@ -342,7 +354,7 @@ public final class StandardProcessScheduler implements ProcessScheduler {
                     ReflectionUtils.invokeMethodsWithAnnotation(OnUnscheduled.class, reportingTask, configurationContext);
                 } catch (final Exception e) {
                     final Throwable cause = e instanceof InvocationTargetException ? e.getCause() : e;
-                    final ComponentLog componentLog = new SimpleProcessLogger(reportingTask.getIdentifier(), reportingTask, new StandardLoggingContext(null));
+                    final ComponentLog componentLog = new SimpleProcessLogger(reportingTask.getIdentifier(), reportingTask, new StandardLoggingContext());
                     componentLog.error("Failed to invoke @OnUnscheduled method due to {}", cause);
 
                     LOG.error("Failed to invoke the @OnUnscheduled methods of {} due to {}; administratively yielding this ReportingTask and will attempt to schedule it again after {}",
@@ -379,7 +391,7 @@ public final class StandardProcessScheduler implements ProcessScheduler {
         final LifecycleState lifecycleState = getLifecycleState(requireNonNull(procNode), true, false);
 
         final Supplier<ProcessContext> processContextFactory = () -> new StandardProcessContext(procNode, getControllerServiceProvider(),
-            getStateManager(procNode.getIdentifier()), lifecycleState::isTerminated, flowController);
+            getStateManager(procNode), lifecycleState::isTerminated, flowController);
 
         final boolean scheduleActions = procNode.getProcessGroup().resolveExecutionEngine() != ExecutionEngine.STATELESS;
 
@@ -414,6 +426,7 @@ public final class StandardProcessScheduler implements ProcessScheduler {
         return future;
     }
 
+    @Override
     public synchronized CompletableFuture<Void> startStatelessGroup(final StatelessGroupNode groupNode) {
         final LifecycleState lifecycleState = getLifecycleState(requireNonNull(groupNode), true, true);
         lifecycleState.setScheduled(true);
@@ -452,14 +465,48 @@ public final class StandardProcessScheduler implements ProcessScheduler {
         // we do not use a separate copy of the Controller Service, because doing so would cause problems for services that
         // perform functions such as caching or connection pooling.
         final List<CompletableFuture<?>> serviceStartFutures = new ArrayList<>();
-        for (final ControllerServiceNode serviceNode : groupNode.getProcessGroup().findAllControllerServices()) {
-            serviceStartFutures.add(enableControllerService(serviceNode));
+        final Set<ControllerServiceNode> allServices = groupNode.getProcessGroup().findAllControllerServices();
+        for (final ControllerServiceNode serviceNode : allServices) {
+            // Enable Controller Service but if it fails, do not complete the future Exceptionally. This allows us to wait up until the
+            // timeout for the service to enable, even if it needs to retry in order to do so.
+            serviceStartFutures.add(enableControllerService(serviceNode, false));
         }
 
         final CompletableFuture<?> allServiceStartFutures = CompletableFuture.allOf(serviceStartFutures.toArray(new CompletableFuture<?>[0]));
         allServiceStartFutures.thenRun(() -> {
             LOG.info("Starting {}", groupNode);
             groupNode.start(componentMonitoringThreadPool, callback, lifecycleState);
+        });
+
+        Thread.ofVirtual().name("Wait for Controller Services Enabled").start(() -> {
+            while (groupNode.getDesiredState() == ScheduledState.RUNNING) {
+                try {
+                    allServiceStartFutures.get(1, TimeUnit.SECONDS);
+                    return;
+                } catch (final InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return;
+                } catch (final TimeoutException ignored) {
+                    // Controller Services have not yet enabled. Keep waiting.
+                    // We do not want to just wait for the Future.get() to return because we want to check if the desired state has changed.
+                } catch (final Exception e) {
+                    // Controller Services are not done enabling. Keep waiting. We don't just wait a huge amount of time
+                    // for the Future.get() to return because we want to check if the desired state has changed.
+                    LOG.error("Failed to wait for all Controller Services to be enabled for {}; will try again in 1 second", groupNode.getProcessGroup(), e);
+                }
+            }
+
+            LOG.info("{} is no scheduled to run. Disabling {} Controller Services", groupNode.getProcessGroup(), allServices.size());
+
+            // Cancel all service start futures, interrupting them if they are waiting
+            for (final Future<?> serviceStartFuture : serviceStartFutures) {
+                serviceStartFuture.cancel(true);
+            }
+
+            // Disable the Controller Services
+            allServices.forEach(this::disableControllerService);
+
+            future.completeExceptionally(new TimeoutException("Timed out waiting for Controller Services to be enabled"));
         });
 
         return future;
@@ -477,7 +524,7 @@ public final class StandardProcessScheduler implements ProcessScheduler {
         final LifecycleState lifecycleState = getLifecycleState(requireNonNull(procNode), true, false);
 
         final Supplier<ProcessContext> processContextFactory = () -> new StandardProcessContext(procNode, getControllerServiceProvider(),
-            getStateManager(procNode.getIdentifier()), lifecycleState::isTerminated, flowController);
+            getStateManager(procNode), lifecycleState::isTerminated, flowController);
 
         final CompletableFuture<Void> future = new CompletableFuture<>();
         final SchedulingAgentCallback callback = new SchedulingAgentCallback() {
@@ -508,21 +555,20 @@ public final class StandardProcessScheduler implements ProcessScheduler {
 
     /**
      * Stops the given {@link Processor} by invoking its
-     * {@link ProcessorNode#stop(ProcessScheduler, ScheduledExecutorService, ProcessContext, SchedulingAgent, LifecycleState, boolean)}
+     * {@link ProcessorNode#stop(ProcessScheduler, ScheduledExecutorService, ProcessContext, SchedulingAgent, LifecycleState, ProcessorStopLifecycleMethods)}
      * method.
      *
-     * @see StandardProcessorNode#stop(ProcessScheduler, ScheduledExecutorService, ProcessContext, SchedulingAgent, LifecycleState, boolean)
+     * @see StandardProcessorNode#stop(ProcessScheduler, ScheduledExecutorService, ProcessContext, SchedulingAgent, LifecycleState, ProcessorStopLifecycleMethods)
      */
     @Override
-    public synchronized CompletableFuture<Void> stopProcessor(final ProcessorNode procNode) {
+    public synchronized CompletableFuture<Void> stopProcessor(final ProcessorNode procNode, final ProcessorStopLifecycleMethods lifecycleMethods) {
         final LifecycleState lifecycleState = getLifecycleState(procNode, false, false);
 
-        StandardProcessContext processContext = new StandardProcessContext(procNode, getControllerServiceProvider(),
-            getStateManager(procNode.getIdentifier()), lifecycleState::isTerminated, flowController);
+        final StandardProcessContext processContext = new StandardProcessContext(procNode, getControllerServiceProvider(),
+            getStateManager(procNode), lifecycleState::isTerminated, flowController);
 
-        final boolean triggerLifecycleMethods = procNode.getProcessGroup().resolveExecutionEngine() != ExecutionEngine.STATELESS;
         LOG.info("Stopping {}", procNode);
-        return procNode.stop(this, this.componentLifeCycleThreadPool, processContext, getSchedulingAgent(procNode), lifecycleState, triggerLifecycleMethods);
+        return procNode.stop(this, this.componentLifeCycleThreadPool, processContext, getSchedulingAgent(procNode), lifecycleState, lifecycleMethods);
     }
 
     @Override
@@ -695,7 +741,8 @@ public final class StandardProcessScheduler implements ProcessScheduler {
         getSchedulingAgent(connectable).unschedule(connectable, state);
 
         if (!state.isScheduled() && state.getActiveThreadCount() == 0 && state.mustCallOnStoppedMethods()) {
-            final ConnectableProcessContext processContext = new ConnectableProcessContext(connectable, getStateManager(connectable.getIdentifier()));
+            final StateManager stateManager = (connectable instanceof ProcessorNode) ? getStateManager((ProcessorNode) connectable) : getStateManager(connectable.getIdentifier());
+            final ConnectableProcessContext processContext = new ConnectableProcessContext(connectable, stateManager);
             try (final NarCloseable ignored = NarCloseable.withComponentNarLoader(flowController.getExtensionManager(), connectable.getClass(), connectable.getIdentifier())) {
                 ReflectionUtils.quietlyInvokeMethodsWithAnnotation(OnStopped.class, connectable, processContext);
             }
@@ -804,8 +851,27 @@ public final class StandardProcessScheduler implements ProcessScheduler {
 
     @Override
     public CompletableFuture<Void> enableControllerService(final ControllerServiceNode service) {
+        return enableControllerService(service, true);
+    }
+
+    private CompletableFuture<Void> enableControllerService(final ControllerServiceNode service, final boolean completeFutureExceptionally) {
+        if (service.isActive()) {
+            LOG.debug("{} is already active, so not enabling it again", service);
+            return CompletableFuture.completedFuture(null);
+        }
+
         LOG.info("Enabling {}", service);
-        return service.enable(this.componentLifeCycleThreadPool, this.administrativeYieldMillis);
+
+        final List<CompletableFuture<Void>> futures = new ArrayList<>();
+        final List<ControllerServiceNode> dependentServices = service.getRequiredControllerServices();
+        for (final ControllerServiceNode dependentService : dependentServices) {
+            // Enable Controller Service but if it fails, do not complete the future Exceptionally. This allows us to wait up until the
+            // timeout for the service to enable, even if it needs to retry in order to do so.
+            futures.add(enableControllerService(dependentService, completeFutureExceptionally));
+        }
+
+        futures.add(service.enable(this.componentLifeCycleThreadPool, this.administrativeYieldMillis, completeFutureExceptionally));
+        return CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]));
     }
 
     @Override

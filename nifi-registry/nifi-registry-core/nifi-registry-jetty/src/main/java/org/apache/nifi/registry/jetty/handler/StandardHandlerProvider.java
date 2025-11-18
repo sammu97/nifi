@@ -24,7 +24,7 @@ import org.eclipse.jetty.server.handler.ContextHandlerCollection;
 import org.eclipse.jetty.ee10.servlet.DefaultServlet;
 import org.eclipse.jetty.ee10.servlet.ErrorPageErrorHandler;
 import org.eclipse.jetty.ee10.servlet.ServletHolder;
-import org.eclipse.jetty.ee10.webapp.WebAppClassLoader;
+import org.eclipse.jetty.ee.webapp.WebAppClassLoader;
 import org.eclipse.jetty.ee10.webapp.WebAppContext;
 
 import java.io.File;
@@ -78,7 +78,7 @@ public class StandardHandlerProvider implements HandlerProvider {
 
     private static final String WEB_INF_JAR_PATTERN = ".*/spring-[^/]*\\.jar$";
 
-    private static final String CONTAINER_JAR_PATTERN = ".*/jetty-jakarta-servlet-api-[^/]*\\.jar$|.*jakarta.servlet.jsp.jstl-[^/]*\\.jar";
+    private static final String CONTAINER_JAR_PATTERN = ".*/jetty-(jakarta-)?servlet-api-[^/]*\\.jar$|.*jakarta.servlet.jsp.jstl-[^/]*\\.jar";
 
     private final String docsDirectory;
 
@@ -110,6 +110,7 @@ public class StandardHandlerProvider implements HandlerProvider {
         final ClassLoader apiClassLoader = getApiClassLoader(properties.getDatabaseDriverDirectory());
         final WebAppContext apiContext = getWebAppContext(libDirectory, workDirectory, apiClassLoader, API_FILE_PATTERN, API_CONTEXT_PATH);
         apiContext.setAttribute(PROPERTIES_PARAMETER, properties);
+        apiContext.setThrowUnavailableOnStartupException(true);
         handlers.addHandler(apiContext);
 
         final WebAppContext docsContext = getWebAppContext(libDirectory, workDirectory, ClassLoader.getSystemClassLoader(), DOCS_FILE_PATTERN, DOCS_CONTEXT_PATH);
@@ -171,7 +172,6 @@ public class StandardHandlerProvider implements HandlerProvider {
 
     private ErrorPageErrorHandler getErrorHandler() {
         final ErrorPageErrorHandler errorHandler = new ErrorPageErrorHandler();
-        errorHandler.setShowServlet(false);
         errorHandler.setShowStacks(false);
         errorHandler.setShowMessageInTitle(false);
         return errorHandler;

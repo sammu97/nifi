@@ -35,6 +35,7 @@ import org.apache.nifi.controller.SchedulingAgentCallback;
 import org.apache.nifi.controller.repository.ContentRepository;
 import org.apache.nifi.controller.repository.FlowFileEventRepository;
 import org.apache.nifi.controller.repository.FlowFileRepository;
+import org.apache.nifi.controller.repository.metrics.tracking.StatsTracker;
 import org.apache.nifi.controller.scheduling.LifecycleState;
 import org.apache.nifi.controller.scheduling.LifecycleStateManager;
 import org.apache.nifi.controller.scheduling.SchedulingAgent;
@@ -43,6 +44,7 @@ import org.apache.nifi.controller.service.ControllerServiceNode;
 import org.apache.nifi.controller.service.ControllerServiceProvider;
 import org.apache.nifi.controller.tasks.StatelessFlowTask;
 import org.apache.nifi.flow.VersionedExternalFlow;
+import org.apache.nifi.lifecycle.ProcessorStopLifecycleMethods;
 import org.apache.nifi.logging.ComponentLog;
 import org.apache.nifi.nar.ExtensionManager;
 import org.apache.nifi.processor.ProcessContext;
@@ -104,6 +106,7 @@ public class StandardStatelessGroupNode implements StatelessGroupNode {
     private final StatelessGroupFactory statelessGroupFactory;
     private final LifecycleStateManager lifecycleStateManager;
     private final FlowFileEventRepository flowFileEventRepository;
+    private final StatsTracker statsTracker;
     private final long boredYieldMillis;
 
     private volatile List<Connection> incomingConnections;
@@ -131,6 +134,7 @@ public class StandardStatelessGroupNode implements StatelessGroupNode {
         this.statelessGroupFactory = builder.statelessGroupFactory;
         this.lifecycleStateManager = builder.lifecycleStateManager;
         this.flowFileEventRepository = builder.flowFileEventRepository;
+        this.statsTracker = builder.statsTracker;
         this.boredYieldMillis = builder.boredYieldMillis;
     }
 
@@ -148,7 +152,6 @@ public class StandardStatelessGroupNode implements StatelessGroupNode {
                 return;
             }
 
-            desiredState = ScheduledState.RUNNING;
             currentState = ScheduledState.STARTING;
             logger.info("Starting {}", this);
         } finally {
@@ -235,7 +238,7 @@ public class StandardStatelessGroupNode implements StatelessGroupNode {
             } catch (final Exception e) {
                 for (final StandardStatelessFlow flow : createdFlows) {
                     try {
-                        flow.shutdown(false, true);
+                        flow.shutdown(false, true, Duration.ofMillis(0));
                     } catch (final Exception ex) {
                         logger.error("Failed to shutdown Stateless Flow {}", flow, ex);
                     }
@@ -313,10 +316,9 @@ public class StandardStatelessGroupNode implements StatelessGroupNode {
     private void shutdownFlows() {
         final List<StatelessFlowTask> tasks = initializedFlowTasks;
         if (tasks != null) {
-            tasks.forEach(StatelessFlowTask::shutdown);
+            tasks.stream().parallel().forEach(StatelessFlowTask::shutdown);
         }
     }
-
 
     private StandardStatelessFlow createStatelessFlow(final ProcessGroup group, final VersionedExternalFlow versionedExternalFlow) {
         final Set<String> failurePortNames = group.getOutputPorts().stream()
@@ -330,7 +332,7 @@ public class StandardStatelessGroupNode implements StatelessGroupNode {
             .transactionThresholds(TransactionThresholds.UNLIMITED)
             .build();
 
-        final ProcessScheduler processScheduler = new StatelessProcessScheduler(extensionManager, Duration.of(10, ChronoUnit.SECONDS)) {
+        final ProcessScheduler processScheduler = new StatelessProcessScheduler(extensionManager, lifecycleStateManager, Duration.of(10, ChronoUnit.SECONDS)) {
             @Override
             public void yield(final ProcessorNode procNode) {
                 if (isSourceProcessor(procNode)) {
@@ -354,7 +356,8 @@ public class StandardStatelessGroupNode implements StatelessGroupNode {
             processScheduler,
             bulletinRepository,
             lifecycleStateManager,
-            Duration.of(10, ChronoUnit.SECONDS));
+            Duration.of(10, ChronoUnit.SECONDS),
+            statsTracker);
 
         // We don't want to enable Controller Services because we want to use the actual Controller Services that exist within the
         // Standard NiFi instance, not the ephemeral ones that created during the initialization of the Stateless Group.
@@ -369,7 +372,12 @@ public class StandardStatelessGroupNode implements StatelessGroupNode {
             }
         };
 
-        dataflow.initialize(initializationContext);
+        try {
+            dataflow.initialize(initializationContext);
+        } catch (final Exception e) {
+            dataflow.shutdown(true, true, Duration.ofMillis(0));
+            throw e;
+        }
 
         return dataflow;
     }
@@ -457,7 +465,7 @@ public class StandardStatelessGroupNode implements StatelessGroupNode {
         final List<CompletableFuture<Void>> futures = new ArrayList<>();
 
         for (final ProcessorNode procNode : getProcessGroup().findAllProcessors()) {
-            final CompletableFuture<Void> stopProcessorFuture = scheduler.stopProcessor(procNode);
+            final CompletableFuture<Void> stopProcessorFuture = scheduler.stopProcessor(procNode, ProcessorStopLifecycleMethods.TRIGGER_NONE);
             futures.add(stopProcessorFuture);
         }
 
@@ -476,7 +484,6 @@ public class StandardStatelessGroupNode implements StatelessGroupNode {
 
         return allStoppedFuture;
     }
-
 
 
     private void stopPorts() {
@@ -518,6 +525,11 @@ public class StandardStatelessGroupNode implements StatelessGroupNode {
     @Override
     public ScheduledState getDesiredState() {
         return desiredState;
+    }
+
+    @Override
+    public void setDesiredState(final ScheduledState desiredState) {
+        this.desiredState = desiredState;
     }
 
     @Override
@@ -913,6 +925,7 @@ public class StandardStatelessGroupNode implements StatelessGroupNode {
         private StatelessGroupFactory statelessGroupFactory;
         private LifecycleStateManager lifecycleStateManager;
         private FlowFileEventRepository flowFileEventRepository;
+        private StatsTracker statsTracker;
         private long boredYieldMillis = 10L;
 
         public Builder rootGroup(final ProcessGroup rootGroup) {
@@ -972,6 +985,11 @@ public class StandardStatelessGroupNode implements StatelessGroupNode {
 
         public Builder flowFileEventRepository(final FlowFileEventRepository flowFileEventRepository) {
             this.flowFileEventRepository = flowFileEventRepository;
+            return this;
+        }
+
+        public Builder statsTracker(final StatsTracker statsTracker) {
+            this.statsTracker = statsTracker;
             return this;
         }
 

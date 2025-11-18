@@ -20,6 +20,8 @@ import jakarta.xml.bind.annotation.XmlRegistry;
 
 import org.apache.nifi.cluster.protocol.message.ConnectionRequestMessage;
 import org.apache.nifi.cluster.protocol.message.ConnectionResponseMessage;
+import org.apache.nifi.cluster.protocol.message.NodeStatusesRequestMessage;
+import org.apache.nifi.cluster.protocol.message.NodeStatusesResponseMessage;
 import org.apache.nifi.cluster.protocol.message.OffloadMessage;
 import org.apache.nifi.cluster.protocol.message.DisconnectMessage;
 import org.apache.nifi.cluster.protocol.message.FlowRequestMessage;
@@ -41,9 +43,6 @@ import org.apache.nifi.cluster.protocol.message.ServiceBroadcastMessage;
  */
 @XmlRegistry
 public class ObjectFactory {
-
-    public ObjectFactory() {
-    }
 
     public ReconnectionRequestMessage createReconnectionRequestMessage() {
         return new ReconnectionRequestMessage();
@@ -101,8 +100,16 @@ public class ObjectFactory {
         return new NodeConnectionStatusRequestMessage();
     }
 
-    public NodeConnectionStatusResponseMessage createNodeConnectionStatusResponsetMessage() {
+    public NodeConnectionStatusResponseMessage createNodeConnectionStatusResponseMessage() {
         return new NodeConnectionStatusResponseMessage();
+    }
+
+    public NodeStatusesRequestMessage createNodeStatusesRequestMessage() {
+        return new NodeStatusesRequestMessage();
+    }
+
+    public NodeStatusesResponseMessage createNodeStatusesResponseMessage() {
+        return new NodeStatusesResponseMessage();
     }
 
     public HeartbeatResponseMessage createHeartbeatResponse() {

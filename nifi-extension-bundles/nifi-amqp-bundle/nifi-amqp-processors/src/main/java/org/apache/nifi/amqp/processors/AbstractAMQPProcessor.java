@@ -287,7 +287,7 @@ abstract class AbstractAMQPProcessor<T extends AMQPWorker> extends AbstractProce
     private AMQPResource<T> createResource(final ProcessContext context) {
         Connection connection = null;
         try {
-            ExecutorService executor = Executors.newSingleThreadExecutor(new BasicThreadFactory.Builder()
+            ExecutorService executor = Executors.newSingleThreadExecutor(BasicThreadFactory.builder()
                     .namingPattern("AMQP Consumer: " + getIdentifier())
                     .build());
             connection = createConnection(context, executor);
@@ -314,7 +314,11 @@ abstract class AbstractAMQPProcessor<T extends AMQPWorker> extends AbstractProce
         final ConnectionFactory cf = new ConnectionFactory();
         cf.setUsername(context.getProperty(USER).evaluateAttributeExpressions().getValue());
         cf.setPassword(context.getProperty(PASSWORD).getValue());
-        cf.setMaxInboundMessageBodySize(context.getProperty(MAX_INBOUND_MESSAGE_BODY_SIZE).evaluateAttributeExpressions().asDataSize(DataUnit.B).intValue());
+
+        // sets max message size for Consume processor
+        if (context.getProperty(MAX_INBOUND_MESSAGE_BODY_SIZE).isSet()) {
+            cf.setMaxInboundMessageBodySize(context.getProperty(MAX_INBOUND_MESSAGE_BODY_SIZE).evaluateAttributeExpressions().asDataSize(DataUnit.B).intValue());
+        }
 
         final String vHost = context.getProperty(V_HOST).evaluateAttributeExpressions().getValue();
         if (vHost != null) {

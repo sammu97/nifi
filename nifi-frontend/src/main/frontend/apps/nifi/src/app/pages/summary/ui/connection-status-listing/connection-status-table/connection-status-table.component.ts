@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-import { Component } from '@angular/core';
+import { Component, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { MatSortModule, Sort } from '@angular/material/sort';
 import { ComponentType, NiFiCommon } from '@nifi/shared';
@@ -31,7 +31,15 @@ import { ComponentStatusTable } from '../../common/component-status-table/compon
 import { MatButtonModule } from '@angular/material/button';
 import { MatMenu, MatMenuItem, MatMenuTrigger } from '@angular/material/menu';
 
-export type SupportedColumns = 'name' | 'queue' | 'in' | 'out' | 'threshold' | 'sourceName' | 'destinationName';
+export type SupportedColumns =
+    | 'name'
+    | 'queue'
+    | 'in'
+    | 'out'
+    | 'threshold'
+    | 'sourceName'
+    | 'destinationName'
+    | 'loadBalanceStatus';
 
 @Component({
     selector: 'connection-status-table',
@@ -51,10 +59,13 @@ export type SupportedColumns = 'name' | 'queue' | 'in' | 'out' | 'threshold' | '
     styleUrls: ['./connection-status-table.component.scss']
 })
 export class ConnectionStatusTable extends ComponentStatusTable<ConnectionStatusSnapshotEntity> {
+    private nifiCommon = inject(NiFiCommon);
+
     filterableColumns: SummaryTableFilterColumn[] = [
         { key: 'sourceName', label: 'source' },
         { key: 'name', label: 'name' },
-        { key: 'destinationName', label: 'destination' }
+        { key: 'destinationName', label: 'destination' },
+        { key: 'loadBalanceStatus', label: 'loadBalanceStatus' }
     ];
 
     displayedColumns: string[] = [
@@ -65,12 +76,9 @@ export class ConnectionStatusTable extends ComponentStatusTable<ConnectionStatus
         'sourceName',
         'out',
         'destinationName',
+        'loadBalanceStatus',
         'actions'
     ];
-
-    constructor(private nifiCommon: NiFiCommon) {
-        super();
-    }
 
     override filterPredicate(data: ConnectionStatusSnapshotEntity, filter: string): boolean {
         const { filterTerm, filterColumn } = JSON.parse(filter);
@@ -79,8 +87,13 @@ export class ConnectionStatusTable extends ComponentStatusTable<ConnectionStatus
             return true;
         }
 
+        // Apply underscore substitution only for loadBalanceStatus column; trim whitespace so extraneous underscores are not introduced
+        const trimmedTerm: string = (filterTerm as string).trim();
+        const normalizedTerm: string =
+            filterColumn === 'loadBalanceStatus' ? trimmedTerm.replace(/\s+/g, '_') : trimmedTerm;
+
         const field: string = data.connectionStatusSnapshot[filterColumn as keyof ConnectionStatusSnapshot] as string;
-        return this.nifiCommon.stringContains(field, filterTerm, true);
+        return this.nifiCommon.stringContains(field, normalizedTerm, true);
     }
 
     getConnectionLink(connection: ConnectionStatusSnapshotEntity): string[] {
@@ -124,12 +137,26 @@ export class ConnectionStatusTable extends ComponentStatusTable<ConnectionStatus
         return `${connection.connectionStatusSnapshot.percentUseCount}% | ${connection.connectionStatusSnapshot.percentUseBytes}%`;
     }
 
+    formatLoadBalanceStatus(connection: ConnectionStatusSnapshotEntity): string {
+        switch (connection.connectionStatusSnapshot.loadBalanceStatus) {
+            case 'LOAD_BALANCE_NOT_CONFIGURED':
+                return 'Not Configured';
+            case 'LOAD_BALANCE_ACTIVE':
+                return 'Active';
+            case 'LOAD_BALANCE_INACTIVE':
+                return 'Inactive';
+            default:
+                return connection.connectionStatusSnapshot.loadBalanceStatus;
+        }
+    }
+
     override supportsMultiValuedSort(sort: Sort): boolean {
         switch (sort.active) {
             case 'in':
             case 'out':
             case 'threshold':
             case 'queue':
+            case 'loadBalanceStatus':
                 return true;
             default:
                 return false;
@@ -213,6 +240,12 @@ export class ConnectionStatusTable extends ComponentStatusTable<ConnectionStatus
                             b.connectionStatusSnapshot.percentUseBytes
                         );
                     }
+                    break;
+                case 'loadBalanceStatus':
+                    retVal = this.nifiCommon.compareString(
+                        a.connectionStatusSnapshot.loadBalanceStatus,
+                        b.connectionStatusSnapshot.loadBalanceStatus
+                    );
                     break;
                 default:
                     retVal = 0;

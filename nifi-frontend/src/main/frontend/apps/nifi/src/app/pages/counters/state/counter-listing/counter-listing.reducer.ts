@@ -19,8 +19,10 @@ import { CounterListingState } from './index';
 import { createReducer, on } from '@ngrx/store';
 import {
     counterListingApiError,
+    loadCountersError,
     loadCounters,
     loadCountersSuccess,
+    resetAllCountersSuccess,
     resetCounterState,
     resetCounterSuccess
 } from './counter-listing.actions';
@@ -49,6 +51,10 @@ export const counterListingReducer = createReducer(
         ...state,
         saving: false
     })),
+    on(loadCountersError, (state, { status }) => ({
+        ...state,
+        status
+    })),
     on(resetCounterSuccess, (state, { response }) => {
         return produce(state, (draftState) => {
             const index: number = draftState.counters.findIndex((c: any) => c.id === response.counter.id);
@@ -59,6 +65,12 @@ export const counterListingReducer = createReducer(
             }
         });
     }),
+    on(resetAllCountersSuccess, (state, { response }) => ({
+        ...state,
+        counters: response.counters,
+        loadedTimestamp: response.loadedTimestamp,
+        status: 'success' as const
+    })),
     on(resetCounterState, () => ({
         ...initialState
     }))

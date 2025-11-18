@@ -54,6 +54,9 @@ import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
+import static org.apache.nifi.processors.aws.region.RegionUtil.CUSTOM_REGION;
+import static org.apache.nifi.processors.aws.region.RegionUtil.REGION;
+
 @SupportsBatching
 @SeeAlso({DeleteDynamoDB.class, PutDynamoDB.class, PutDynamoDBRecord.class})
 @InputRequirement(Requirement.INPUT_REQUIRED)
@@ -86,6 +89,7 @@ public class GetDynamoDB extends AbstractDynamoDBProcessor {
     public static final List<PropertyDescriptor> PROPERTY_DESCRIPTORS = List.of(
         TABLE,
         REGION,
+        CUSTOM_REGION,
         AWS_CREDENTIALS_PROVIDER_SERVICE,
         JSON_DOCUMENT,
         HASH_KEY_NAME,
@@ -201,7 +205,7 @@ public class GetDynamoDB extends AbstractDynamoDBProcessor {
     @Override
     public void onTrigger(final ProcessContext context, final ProcessSession session) {
         final List<FlowFile> flowFiles = session.get(context.getProperty(BATCH_SIZE).evaluateAttributeExpressions().asInteger());
-        if (flowFiles == null || flowFiles.size() == 0) {
+        if (flowFiles == null || flowFiles.isEmpty()) {
             return;
         }
 

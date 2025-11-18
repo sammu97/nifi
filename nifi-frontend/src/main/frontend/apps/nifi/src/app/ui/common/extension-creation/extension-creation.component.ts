@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-import { Component, ElementRef, EventEmitter, Input, Output, ViewChild } from '@angular/core';
+import { Component, ElementRef, EventEmitter, Input, Output, ViewChild, inject } from '@angular/core';
 import { MatButtonModule } from '@angular/material/button';
 import { MatDialogModule } from '@angular/material/dialog';
 import { MatTableDataSource, MatTableModule } from '@angular/material/table';
@@ -31,6 +31,9 @@ import { MatInputModule } from '@angular/material/input';
 import { ReactiveFormsModule } from '@angular/forms';
 import { anyOf, onLowerCaseFilter } from './filter-predicate/extensions';
 import { matchesCamelCaseSearch } from './filter-predicate/camel-case.search';
+import { ExtensionTypesLoadingStatus } from '../../../state/extension-types';
+import { initialExtensionsTypesState } from '../../../state/extension-types/extension-types.reducer';
+import { NgxSkeletonLoaderComponent } from 'ngx-skeleton-loader';
 
 @Component({
     selector: 'extension-creation',
@@ -44,11 +47,14 @@ import { matchesCamelCaseSearch } from './filter-predicate/camel-case.search';
         NifiSpinnerDirective,
         MatFormFieldModule,
         MatInputModule,
-        ReactiveFormsModule
+        ReactiveFormsModule,
+        NgxSkeletonLoaderComponent
     ],
     styleUrls: ['./extension-creation.component.scss']
 })
 export class ExtensionCreation extends CloseOnEscapeDialog {
+    private nifiCommon = inject(NiFiCommon);
+
     @Input() set documentedTypes(documentedTypes: DocumentedType[]) {
         if (this.selectedType == null && documentedTypes.length > 0) {
             this.selectedType = documentedTypes[0];
@@ -59,6 +65,7 @@ export class ExtensionCreation extends CloseOnEscapeDialog {
 
     @Input() componentType!: string;
     @Input() saving!: boolean;
+    @Input() extensionTypesLoadingStatus: ExtensionTypesLoadingStatus = initialExtensionsTypesState.status;
     @Input() initialSortColumn: 'type' | 'version' | 'tags' = 'type';
     @Input() initialSortDirection: 'asc' | 'desc' = 'asc';
     activeSort: Sort = {
@@ -77,7 +84,7 @@ export class ExtensionCreation extends CloseOnEscapeDialog {
     dataSource: MatTableDataSource<DocumentedType> = new MatTableDataSource<DocumentedType>();
     selectedType: DocumentedType | null = null;
 
-    constructor(private nifiCommon: NiFiCommon) {
+    constructor() {
         super();
 
         const defaultPredicate = this.dataSource.filterPredicate;

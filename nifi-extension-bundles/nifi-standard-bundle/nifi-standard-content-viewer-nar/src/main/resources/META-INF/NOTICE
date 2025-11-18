@@ -216,18 +216,6 @@ The following binary components are provided under the Apache Software License v
 
         Copyright 2018 simple-syslog-5424 authors.
 
-  (ASLv2) sshj
-    The following NOTICE information applie:
-
-      sshj - SSHv2 library for Java
-      Copyright 2010-2012 sshj contributors
-
-      This product includes code derived from software developed at
-      The Apache Software Foundation (http://www.apache.org/):
-
-      - Apache MINA SSHD
-      - Apache Commons-Net
-
   (ASLv2) Apache Ftplet API
     The following NOTICE information applies:
       Apache Ftplet API 1.1.1
@@ -252,8 +240,6 @@ The following binary components are provided under the Common Development and Di
     (CDDL 1.1) (GPL2 w/ CPE) jersey-core (com.sun.jersey:jersey-core:jar:1.19 - https://jersey.java.net/jersey-core/)
     (CDDL 1.1) (GPL2 w/ CPE) jersey-client (com.sun.jersey:jersey-client:jar:1.19 - https://jersey.java.net/jersey-client/)
     (CDDL 1.1) (GPL2 w/ CPE) jersey-server (com.sun.jersey:jersey-server:jar:1.19 - https://jersey.java.net/jersey-server/)
-    (CDDL 1.1) (GPL2 w/ CPE) Javax JMS Api (javax.jms:javax.jms-api:jar:2.0.1 - http://java.net/projects/jms-spec/pages/Home)
-    (CDDL 1.1) (GPL2 w/ CPE) javax.ws.rs-api (javax.ws.rs:javax.ws.rs-api:jar:2.1 - http://jax-rs-spec.java.net)
 
 *****************
 Mozilla Public License v2.0

@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-import { Injectable } from '@angular/core';
+import { Injectable, inject } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { Client } from '../../../service/client.service';
 import { Observable } from 'rxjs';
@@ -23,12 +23,10 @@ import { ResetCounterRequest } from '../state/counter-listing';
 
 @Injectable({ providedIn: 'root' })
 export class CountersService {
-    private static readonly API: string = '../nifi-api';
+    private httpClient = inject(HttpClient);
+    private client = inject(Client);
 
-    constructor(
-        private httpClient: HttpClient,
-        private client: Client
-    ) {}
+    private static readonly API: string = '../nifi-api';
 
     getCounters(): Observable<any> {
         return this.httpClient.get(`${CountersService.API}/counters`);
@@ -36,5 +34,9 @@ export class CountersService {
 
     resetCounter(counterResetRequest: ResetCounterRequest): Observable<any> {
         return this.httpClient.put(`${CountersService.API}/counters/${counterResetRequest.counter.id}`, null);
+    }
+
+    resetAllCounters(): Observable<any> {
+        return this.httpClient.put(`${CountersService.API}/counters`, null);
     }
 }

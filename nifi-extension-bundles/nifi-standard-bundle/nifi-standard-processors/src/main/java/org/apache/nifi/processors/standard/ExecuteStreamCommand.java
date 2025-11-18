@@ -42,6 +42,7 @@ import org.apache.nifi.expression.ExpressionLanguageScope;
 import org.apache.nifi.flowfile.FlowFile;
 import org.apache.nifi.flowfile.attributes.CoreAttributes;
 import org.apache.nifi.logging.ComponentLog;
+import org.apache.nifi.migration.PropertyConfiguration;
 import org.apache.nifi.processor.AbstractProcessor;
 import org.apache.nifi.processor.ProcessContext;
 import org.apache.nifi.processor.ProcessSession;
@@ -218,8 +219,7 @@ public class ExecuteStreamCommand extends AbstractProcessor {
             .build();
 
     static final PropertyDescriptor ARGUMENTS_STRATEGY = new PropertyDescriptor.Builder()
-            .name("argumentsStrategy")
-            .displayName("Command Arguments Strategy")
+            .name("Command Arguments Strategy")
             .description("Strategy for configuring arguments to be supplied to the command.")
             .expressionLanguageSupported(ExpressionLanguageScope.NONE)
             .required(false)
@@ -281,7 +281,6 @@ public class ExecuteStreamCommand extends AbstractProcessor {
 
     static final PropertyDescriptor MIME_TYPE = new PropertyDescriptor.Builder()
             .name("Output MIME Type")
-            .displayName("Output MIME Type")
             .description("Specifies the value to set for the \"mime.type\" attribute. This property is ignored if 'Output Destination Attribute' is set.")
             .required(false)
             .addValidator(StandardValidators.NON_EMPTY_VALIDATOR)
@@ -360,8 +359,8 @@ public class ExecuteStreamCommand extends AbstractProcessor {
             return;
         }
 
-        final ArrayList<String> args = new ArrayList<>();
-        final ArrayList<String> argumentAttributeValue = new ArrayList<>();
+        final List<String> args = new ArrayList<>();
+        final List<String> argumentAttributeValue = new ArrayList<>();
         final boolean putToAttribute = context.getProperty(PUT_OUTPUT_IN_ATTRIBUTE).isSet();
         final PropertyValue argumentsStrategyPropertyValue = context.getProperty(ARGUMENTS_STRATEGY);
         final boolean useDynamicPropertyArguments = argumentsStrategyPropertyValue.isSet() && argumentsStrategyPropertyValue.getValue().equals(DYNAMIC_PROPERTY_ARGUMENTS_STRATEGY.getValue());
@@ -417,7 +416,7 @@ public class ExecuteStreamCommand extends AbstractProcessor {
                 args.add(argValue);
 
             }
-            if (argumentAttributeValue.size() > 0) {
+            if (!argumentAttributeValue.isEmpty()) {
                 final StringBuilder builder = new StringBuilder();
                 for (String s : argumentAttributeValue) {
                     builder.append(s).append("\t");
@@ -538,6 +537,11 @@ public class ExecuteStreamCommand extends AbstractProcessor {
             FileUtils.deleteQuietly(errorOut);
             process.destroy(); // last ditch effort to clean up that process.
         }
+    }
+
+    @Override
+    public void migrateProperties(PropertyConfiguration config) {
+        config.renameProperty("argumentsStrategy", ARGUMENTS_STRATEGY.getName());
     }
 
     static class ProcessStreamWriterCallback implements InputStreamCallback {

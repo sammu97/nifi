@@ -19,7 +19,6 @@ import { BreadcrumbEntity, Position } from '../shared';
 import {
     Bundle,
     ComponentHistory,
-    DocumentedType,
     ParameterContextEntity,
     RegistryClientEntity,
     SparseVersionedFlow,
@@ -293,7 +292,6 @@ export interface GroupComponentsSuccess extends CreateComponentResponse {
 
 export interface CreateProcessorDialogRequest {
     request: CreateComponentRequest;
-    processorTypes: DocumentedType[];
 }
 
 export interface GoToRemoteProcessGroupRequest {
@@ -836,6 +834,20 @@ export interface TerminateThreadsRequest {
 
 export interface LoadChildProcessGroupRequest {
     id: string;
+}
+
+/*
+  Clear Bulletins
+*/
+
+export interface ClearBulletinsForGroupRequest {
+    processGroupId: string;
+    fromTimestamp: string;
+}
+
+export interface ClearBulletinsForGroupResponse {
+    processGroupId: string;
+    bulletinsCleared: number;
 }
 
 export interface FlowUpdateRequest {

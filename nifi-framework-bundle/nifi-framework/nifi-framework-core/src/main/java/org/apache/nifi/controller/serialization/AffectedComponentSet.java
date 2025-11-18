@@ -59,6 +59,7 @@ import java.util.Set;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.function.Predicate;
 import java.util.stream.Collectors;
 
 /**
@@ -378,6 +379,12 @@ public class AffectedComponentSet {
             }
         }
 
+        // With DEEP comparison, configuration differences for newly added components may reference a null local component (Component A).
+        // These do not affect any existing local components, so ignore them.
+        if (difference.getComponentA() == null) {
+            return;
+        }
+
         if (differenceType == DifferenceType.COMPONENT_REMOVED && difference.getComponentA().getComponentType() == ComponentType.PROCESS_GROUP) {
             // If a Process Group is removed, we need to consider any component within the Process Group as affected also
             addAllComponentsWithinGroup(difference.getComponentA().getInstanceIdentifier());
@@ -402,7 +409,8 @@ public class AffectedComponentSet {
 
     private void addComponentsForInheritedParameterContextChange(final FlowDifference difference) {
         // If the inherited parameter contexts have changed, any component referencing a parameter in that context is affected.
-        final String parameterContextId = difference.getComponentA().getInstanceIdentifier();
+        final VersionedComponent vc = difference.getComponentA() == null ? difference.getComponentB() : difference.getComponentA();
+        final String parameterContextId = vc.getInstanceIdentifier();
         final ParameterContext context = flowManager.getParameterContextManager().getParameterContext(parameterContextId);
         if (context == null) {
             return;
@@ -428,7 +436,8 @@ public class AffectedComponentSet {
 
     private void addComponentsForParameterContextChange(final FlowDifference difference) {
         // When the parameter context that a PG is bound to is updated, any component referencing a parameter is affected.
-        final String groupId = difference.getComponentA().getInstanceIdentifier();
+        final VersionedComponent vc = difference.getComponentA() == null ? difference.getComponentB() : difference.getComponentA();
+        final String groupId = vc.getInstanceIdentifier();
         final ProcessGroup group = flowManager.getGroup(groupId);
         if (group == null) {
             return;
@@ -455,22 +464,18 @@ public class AffectedComponentSet {
         }
 
         final ExecutionEngine executionEngine = start.getExecutionEngine();
-        switch (executionEngine) {
-            case STATELESS:
-                return start;
-            case INHERITED:
-                return getStatelessGroup(start.getParent());
-            case STANDARD:
-            default:
-                return null;
-        }
+        return switch (executionEngine) {
+            case STATELESS -> start;
+            case INHERITED -> getStatelessGroup(start.getParent());
+            default -> null;
+        };
     }
 
     private void addComponentsForParameterUpdate(final FlowDifference difference) {
         final DifferenceType differenceType = difference.getDifferenceType();
 
         final Optional<String> optionalParameterName = difference.getFieldName();
-        if (!optionalParameterName.isPresent()) {
+        if (optionalParameterName.isEmpty()) {
             logger.warn("Encountered a Flow Difference {} with Difference Type of {} but no indication as to which parameter was updated.", difference, differenceType);
             return;
         }
@@ -505,21 +510,13 @@ public class AffectedComponentSet {
     }
 
     private Connectable getConnectable(final ConnectableComponentType type, final String identifier) {
-        switch (type) {
-            case FUNNEL:
-                return flowManager.getFunnel(identifier);
-            case INPUT_PORT:
-                return flowManager.getInputPort(identifier);
-            case OUTPUT_PORT:
-                return flowManager.getOutputPort(identifier);
-            case PROCESSOR:
-                return flowManager.getProcessorNode(identifier);
-            case REMOTE_INPUT_PORT:
-            case REMOTE_OUTPUT_PORT:
-                return flowManager.getRootGroup().findRemoteGroupPort(identifier);
-            default:
-                return null;
-        }
+        return switch (type) {
+            case FUNNEL -> flowManager.getFunnel(identifier);
+            case INPUT_PORT -> flowManager.getInputPort(identifier);
+            case OUTPUT_PORT -> flowManager.getOutputPort(identifier);
+            case PROCESSOR -> flowManager.getProcessorNode(identifier);
+            case REMOTE_INPUT_PORT, REMOTE_OUTPUT_PORT -> flowManager.getRootGroup().findRemoteGroupPort(identifier);
+        };
     }
 
     private void addAffectedComponents(final VersionedComponent versionedComponent) {
@@ -559,6 +556,7 @@ public class AffectedComponentSet {
                 break;
             case FLOW_REGISTRY_CLIENT:
                 addFlowRegistryClient(flowManager.getFlowRegistryClient(componentId));
+                break;
             case REMOTE_PROCESS_GROUP:
                 addRemoteProcessGroup(flowManager.getRootGroup().findRemoteProcessGroup(componentId));
                 break;
@@ -623,20 +621,71 @@ public class AffectedComponentSet {
         processors.forEach(processor -> processor.getProcessGroup().startProcessor(processor, false));
         reportingTasks.forEach(flowController::startReportingTask);
         flowAnalysisRules.forEach(flowController::enableFlowAnalysisRule);
-        statelessProcessGroups.forEach(group -> group.startProcessing());
+        statelessProcessGroups.forEach(ProcessGroup::startProcessing);
     }
 
-    public void removeComponents(final ComponentSetFilter filter) {
-        inputPorts.removeIf(filter::testInputPort);
-        outputPorts.removeIf(filter::testOutputPort);
-        remoteInputPorts.removeIf(filter::testRemoteInputPort);
-        remoteOutputPorts.removeIf(filter::testRemoteOutputPort);
-        processors.removeIf(filter::testProcessor);
-        controllerServices.removeIf(filter::testControllerService);
-        reportingTasks.removeIf(filter::testReportingTask);
-        flowAnalysisRules.removeIf(filter::testFlowAnalysisRule);
-        flowRegistryClients.removeIf(filter::testFlowRegistryClient);
-        statelessProcessGroups.removeIf(filter::testStatelessGroup);
+    public int getComponentCount() {
+        return inputPorts.size() + outputPorts.size() + remoteInputPorts.size() + remoteOutputPorts.size() +
+               processors.size() + reportingTasks.size() + flowAnalysisRules.size() + controllerServices.size() +
+               flowRegistryClients.size() + statelessProcessGroups.size();
+    }
+
+    public AffectedComponentSet removeComponents(final ComponentSetFilter filter) {
+        final AffectedComponentSet removed = new AffectedComponentSet(flowController);
+        removeMatching(inputPorts, filter::testInputPort).forEach(removed::addInputPort);
+        removeMatching(outputPorts, filter::testOutputPort).forEach(removed::addOutputPort);
+        removeMatching(remoteInputPorts, filter::testRemoteInputPort).forEach(removed::addRemoteInputPort);
+        removeMatching(remoteOutputPorts, filter::testRemoteOutputPort).forEach(removed::addRemoteOutputPort);
+        removeMatching(processors, filter::testProcessor).forEach(removed::addProcessor);
+        removeMatching(controllerServices, filter::testControllerService).forEach(removed::addControllerServiceWithoutReferences);
+        removeMatching(reportingTasks, filter::testReportingTask).forEach(removed::addReportingTask);
+        removeMatching(flowAnalysisRules, filter::testFlowAnalysisRule).forEach(removed::addFlowAnalysisRule);
+        removeMatching(flowRegistryClients, filter::testFlowRegistryClient).forEach(removed::addFlowRegistryClient);
+        removeMatching(statelessProcessGroups, filter::testStatelessGroup).forEach(removed::addStatelessGroup);
+        return removed;
+    }
+
+    private <T> Set<T> removeMatching(final Set<T> set, final Predicate<T> test) {
+        final Set<T> toRemove = new HashSet<>();
+        for (final T element : set) {
+            if (test.test(element)) {
+                toRemove.add(element);
+            }
+        }
+
+        set.removeAll(toRemove);
+        return toRemove;
+    }
+
+    /**
+     * Returns an AffectedComponentSet that contains all components that are in this but not in the given AffectedComponentSet
+     * @param other the AffectedComponentSet to subtract from this
+     * @return the AffectedComponentSet representing the difference
+     */
+    public AffectedComponentSet minus(final AffectedComponentSet other) {
+        final AffectedComponentSet result = new AffectedComponentSet(flowController);
+        inputPorts.stream().filter(port -> !other.inputPorts.contains(port)).forEach(result::addInputPort);
+        outputPorts.stream().filter(port -> !other.outputPorts.contains(port)).forEach(result::addOutputPort);
+        remoteInputPorts.stream().filter(port -> !other.remoteInputPorts.contains(port)).forEach(result::addRemoteInputPort);
+        remoteOutputPorts.stream().filter(port -> !other.remoteOutputPorts.contains(port)).forEach(result::addRemoteOutputPort);
+        processors.stream().filter(processor -> !other.processors.contains(processor)).forEach(result::addProcessor);
+        controllerServices.stream().filter(controllerService -> !other.controllerServices.contains(controllerService)).forEach(result::addControllerService);
+        reportingTasks.stream().filter(task -> !other.reportingTasks.contains(task)).forEach(result::addReportingTask);
+        flowAnalysisRules.stream().filter(rule -> !other.flowAnalysisRules.contains(rule)).forEach(result::addFlowAnalysisRule);
+        flowRegistryClients.stream().filter(client -> !other.flowRegistryClients.contains(client)).forEach(result::addFlowRegistryClient);
+        statelessProcessGroups.stream().filter(group -> !other.statelessProcessGroups.contains(group)).forEach(result::addStatelessGroup);
+
+        return result;
+    }
+
+    /**
+     * Returns a boolean indicating whether or not this AffectedComponentSet is empty
+     * @return <code>true</code> if the AffectedComponentSet is empty, <code>false</code> otherwise
+     */
+    public boolean isEmpty() {
+        return inputPorts.isEmpty() && outputPorts.isEmpty() && remoteInputPorts.isEmpty() && remoteOutputPorts.isEmpty()
+            && processors.isEmpty() && controllerServices.isEmpty() && reportingTasks.isEmpty() && flowAnalysisRules.isEmpty()
+            && flowRegistryClients.isEmpty() && statelessProcessGroups.isEmpty();
     }
 
     /**
@@ -644,7 +693,7 @@ public class AffectedComponentSet {
      * that one or more components referred to by the AffectedComponentSet no longer exist (for example, there was a dataflow update that removed a Processor, so that Processor no longer exists).
      *
      * @return an AffectedComponentSet that represents all components within this AffectedComponentSet that currently exist within the NiFi instance. The components contained by the returned
-     * AffectedComponentSetwill always be a subset or equal to the set of components contained by this.
+     * AffectedComponentSet will always be a subset or equal to the set of components contained by this.
      */
     public AffectedComponentSet toExistingSet() {
         final ControllerServiceProvider serviceProvider = flowController.getControllerServiceProvider();
@@ -688,18 +737,12 @@ public class AffectedComponentSet {
     }
 
     private boolean isStartable(final ComponentNode componentNode) {
-        if (componentNode == null) {
-            return false;
-        }
-
-        if (componentNode instanceof ProcessorNode) {
-            return ((ProcessorNode) componentNode).getScheduledState() != ScheduledState.DISABLED;
-        }
-        if (componentNode instanceof ReportingTaskNode) {
-            return ((ReportingTaskNode) componentNode).getScheduledState() != ScheduledState.DISABLED;
-        }
-
-        return true;
+        return switch (componentNode) {
+            case null -> false;
+            case ProcessorNode processorNode -> processorNode.getScheduledState() != ScheduledState.DISABLED;
+            case ReportingTaskNode reportingTaskNode -> reportingTaskNode.getScheduledState() != ScheduledState.DISABLED;
+            default -> true;
+        };
     }
 
     private boolean isStartable(final ProcessGroup group) {
@@ -726,7 +769,7 @@ public class AffectedComponentSet {
     }
 
     public void stop() {
-        logger.info("Stopping the following components: {}", this);
+        logger.info("Stopping the following {} components: {}", getComponentCount(), this);
         final long start = System.currentTimeMillis();
 
         inputPorts.forEach(port -> port.getProcessGroup().stopInputPort(port));
@@ -736,7 +779,7 @@ public class AffectedComponentSet {
         processors.forEach(processor -> processor.getProcessGroup().stopProcessor(processor));
         reportingTasks.forEach(flowController::stopReportingTask);
         flowAnalysisRules.forEach(flowController::disableFlowAnalysisRule);
-        statelessProcessGroups.forEach(group -> group.stopProcessing());
+        statelessProcessGroups.forEach(ProcessGroup::stopProcessing);
 
         waitForConnectablesStopped();
 
@@ -817,6 +860,7 @@ public class AffectedComponentSet {
         return true;
     }
 
+
     @Override
     public String toString() {
         return "AffectedComponentSet[" +
@@ -826,7 +870,7 @@ public class AffectedComponentSet {
             ", remoteOutputPorts=" + remoteOutputPorts +
             ", processors=" + processors +
             ", parameterProviders=" + parameterProviders +
-                ", flowRegistryClients=" + flowRegistryClients +
+            ", flowRegistryClients=" + flowRegistryClients +
             ", controllerServices=" + controllerServices +
             ", reportingTasks=" + reportingTasks +
             ", flowAnalysisRules=" + flowAnalysisRules +

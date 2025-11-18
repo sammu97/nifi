@@ -18,12 +18,12 @@ package org.apache.nifi.kafka.processors;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
-import org.apache.commons.io.IOUtils;
 import org.apache.kafka.common.header.Header;
 import org.apache.kafka.common.header.internals.RecordHeader;
 import org.apache.nifi.kafka.processors.consumer.ProcessingStrategy;
 import org.apache.nifi.kafka.service.api.consumer.AutoOffsetReset;
 import org.apache.nifi.kafka.shared.attribute.KafkaFlowFileAttribute;
+import org.apache.nifi.kafka.shared.property.OutputStrategy;
 import org.apache.nifi.provenance.ProvenanceEventRecord;
 import org.apache.nifi.provenance.ProvenanceEventType;
 import org.apache.nifi.reporting.InitializationException;
@@ -33,35 +33,45 @@ import org.apache.nifi.util.TestRunners;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.Arguments;
-import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.EnumSource;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
-import java.util.Arrays;
 import java.util.Iterator;
 import java.util.List;
-import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.ExecutionException;
-import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ConsumeKafkaRecordIT extends AbstractConsumeKafkaIT {
-    private static final String TEST_RESOURCE = "org/apache/nifi/kafka/processors/publish/ff.json";
-    private static final int TEST_RECORD_COUNT = 3;
+    private static final int TEST_RECORD_COUNT = 2;
 
     private static final int FIRST_PARTITION = 0;
+
+    private static final String FIRST_OFFSET = "0";
+
+    private static final String MAX_OFFSET = "1";
+
     private static final String VALID_RECORD_1_TEXT = """
             { "id": 1, "name": "A" }
             """;
+
     private static final String VALID_RECORD_2_TEXT = """
             { "id": 2, "name": "B" }
             """;
+
     private static final String INVALID_RECORD_TEXT = "non-json";
+
+    private static final String FIRST_HEADER = "First-Header";
+
+    private static final String SECOND_HEADER = "Second-Header";
+
+    private static final String FIRST_HEADER_PATTERN = "First.*";
+
+    private static final String HEADER_VALUE = "value";
 
     private TestRunner runner;
 
@@ -89,23 +99,34 @@ class ConsumeKafkaRecordIT extends AbstractConsumeKafkaIT {
         runner.assertAllFlowFilesTransferred(ConsumeKafka.SUCCESS, 0);
     }
 
-    static Stream<Arguments> invalidRecordScenarios() {
-        return Stream.of(
-                Arguments.of("testInvalidRecordAtStart", new String[]{INVALID_RECORD_TEXT, VALID_RECORD_1_TEXT, VALID_RECORD_2_TEXT}),
-                Arguments.of("testInvalidRecordInMiddle", new String[]{VALID_RECORD_1_TEXT, INVALID_RECORD_TEXT, VALID_RECORD_2_TEXT}),
-                Arguments.of("testInvalidRecordAtEnd", new String[]{VALID_RECORD_1_TEXT, VALID_RECORD_2_TEXT, INVALID_RECORD_TEXT}));
+    @ParameterizedTest
+    @EnumSource(value = OutputStrategy.class)
+    void testInvalidRecordInMiddle(final OutputStrategy outputStrategy) throws ExecutionException, InterruptedException {
+        testSingleInvalidRecord("testInvalidRecordInMiddle", outputStrategy, VALID_RECORD_1_TEXT, INVALID_RECORD_TEXT, VALID_RECORD_2_TEXT);
     }
 
     @ParameterizedTest
-    @MethodSource("invalidRecordScenarios")
-    void testInvalidRecord(String testName, String[] recordTexts) throws Exception {
-        runner.setProperty(ConsumeKafka.TOPICS, testName);
-        runner.setProperty(ConsumeKafka.GROUP_ID, testName);
+    @EnumSource(value = OutputStrategy.class)
+    void testInvalidRecordAtEnd(final OutputStrategy outputStrategy) throws ExecutionException, InterruptedException {
+        testSingleInvalidRecord("testInvalidRecordAtEnd", outputStrategy, VALID_RECORD_1_TEXT, VALID_RECORD_2_TEXT, INVALID_RECORD_TEXT);
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = OutputStrategy.class)
+    void testInvalidRecordAtStart(final OutputStrategy outputStrategy) throws ExecutionException, InterruptedException {
+        testSingleInvalidRecord("testInvalidRecordAtStart", outputStrategy, INVALID_RECORD_TEXT, VALID_RECORD_1_TEXT, VALID_RECORD_2_TEXT);
+    }
+
+    private void testSingleInvalidRecord(final String topicPrefix, final OutputStrategy outputStrategy, final String... recordTexts) throws ExecutionException, InterruptedException {
+        final String topicName = topicPrefix + outputStrategy.getValue();
+        runner.setProperty(ConsumeKafka.TOPICS, topicName);
+        runner.setProperty(ConsumeKafka.GROUP_ID, topicName);
         runner.setProperty(ConsumeKafka.PROCESSING_STRATEGY, ProcessingStrategy.RECORD.getValue());
+        runner.setProperty(ConsumeKafka.OUTPUT_STRATEGY, outputStrategy.getValue());
         runner.setProperty(ConsumeKafka.AUTO_OFFSET_RESET, AutoOffsetReset.EARLIEST.getValue());
 
-        for (String text : recordTexts) {
-            produceOne(testName, 0, null, text, List.of());
+        for (final String text : recordTexts) {
+            produceOne(topicName, 0, null, text, List.of());
         }
 
         runner.run(1, false, true);
@@ -123,7 +144,7 @@ class ConsumeKafkaRecordIT extends AbstractConsumeKafkaIT {
     }
 
     @Test
-    void testProcessingStrategyFlowFileOneRecord() throws InterruptedException, ExecutionException, IOException {
+    void testProcessingStrategyRecord() throws InterruptedException, ExecutionException, IOException {
         final String topic = UUID.randomUUID().toString();
         final String groupId = topic.substring(0, topic.indexOf("-"));
 
@@ -131,19 +152,18 @@ class ConsumeKafkaRecordIT extends AbstractConsumeKafkaIT {
         runner.setProperty(ConsumeKafka.TOPICS, topic);
         runner.setProperty(ConsumeKafka.PROCESSING_STRATEGY, ProcessingStrategy.RECORD.getValue());
         runner.setProperty(ConsumeKafka.AUTO_OFFSET_RESET, AutoOffsetReset.EARLIEST.getValue());
-        runner.setProperty(ConsumeKafka.HEADER_NAME_PATTERN, "a*");
+        runner.setProperty(ConsumeKafka.HEADER_NAME_PATTERN, FIRST_HEADER_PATTERN);
 
         runner.run(1, false, true);
 
-        final byte[] bytesFlowFile = IOUtils.toByteArray(Objects.requireNonNull(
-                getClass().getClassLoader().getResource(TEST_RESOURCE)));
-        final String flowFileString = new String(bytesFlowFile, StandardCharsets.UTF_8).trim();
+        final List<Header> headers = List.of(
+                new RecordHeader(FIRST_HEADER, HEADER_VALUE.getBytes(StandardCharsets.UTF_8)),
+                new RecordHeader(SECOND_HEADER, HEADER_VALUE.getBytes(StandardCharsets.UTF_8))
+        );
 
-        final List<Header> headers = Arrays.asList(
-                new RecordHeader("aaa", "value".getBytes(StandardCharsets.UTF_8)),
-                new RecordHeader("bbb", "value".getBytes(StandardCharsets.UTF_8)),
-                new RecordHeader("ccc", "value".getBytes(StandardCharsets.UTF_8)));
-        produceOne(topic, 0, null, flowFileString, headers);
+        produceOne(topic, FIRST_PARTITION, null, VALID_RECORD_1_TEXT, headers);
+        produceOne(topic, FIRST_PARTITION, null, VALID_RECORD_2_TEXT, headers);
+
         while (runner.getFlowFilesForRelationship("success").isEmpty()) {
             runner.run(1, false, false);
         }
@@ -155,29 +175,31 @@ class ConsumeKafkaRecordIT extends AbstractConsumeKafkaIT {
         assertTrue(flowFiles.hasNext());
 
         final MockFlowFile flowFile = flowFiles.next();
-        flowFile.assertContentEquals(flowFileString);
         flowFile.assertAttributeEquals(KafkaFlowFileAttribute.KAFKA_TOPIC, topic);
         flowFile.assertAttributeEquals(KafkaFlowFileAttribute.KAFKA_PARTITION, Integer.toString(FIRST_PARTITION));
-        flowFile.assertAttributeEquals("record.count", Long.toString(TEST_RECORD_COUNT));
-        flowFile.assertAttributeEquals("aaa", "value");
-        flowFile.assertAttributeNotExists("bbb");
-        flowFile.assertAttributeNotExists("ccc");
+        flowFile.assertAttributeEquals(KafkaFlowFileAttribute.KAFKA_MAX_OFFSET, MAX_OFFSET);
+        flowFile.assertAttributeEquals(KafkaFlowFileAttribute.KAFKA_OFFSET, FIRST_OFFSET);
+        flowFile.assertAttributeEquals(KafkaFlowFileAttribute.KAFKA_COUNT, Integer.toString(TEST_RECORD_COUNT));
+
+        flowFile.assertAttributeEquals("record.count", Integer.toString(TEST_RECORD_COUNT));
+        flowFile.assertAttributeEquals(FIRST_HEADER, HEADER_VALUE);
+        flowFile.assertAttributeNotExists(SECOND_HEADER);
 
         final List<ProvenanceEventRecord> provenanceEvents = runner.getProvenanceEvents();
         assertEquals(1, provenanceEvents.size());
         final ProvenanceEventRecord provenanceEvent = provenanceEvents.getFirst();
         assertEquals(ProvenanceEventType.RECEIVE, provenanceEvent.getEventType());
 
-        // [{"id":1,"name":"A"},{"id":2,"name":"B"},{"id":3,"name":"C"}]
         final JsonNode jsonNodeTree = objectMapper.readTree(flowFile.getContent());
         assertInstanceOf(ArrayNode.class, jsonNodeTree);
-        final ArrayNode arrayNode = (ArrayNode) jsonNodeTree;
-        final Iterator<JsonNode> elements = arrayNode.elements();
-        assertEquals(TEST_RECORD_COUNT, arrayNode.size());
-        while (elements.hasNext()) {
-            final JsonNode jsonNode = elements.next();
-            assertTrue(Arrays.asList(1, 2, 3).contains(jsonNode.get("id").asInt()));
-            assertTrue(Arrays.asList("A", "B", "C").contains(jsonNode.get("name").asText()));
-        }
+        assertEquals(2, jsonNodeTree.size());
+
+        final JsonNode firstRecord = jsonNodeTree.get(0);
+        final JsonNode expectedFirstRecord = objectMapper.readTree(VALID_RECORD_1_TEXT);
+        assertEquals(expectedFirstRecord, firstRecord);
+
+        final JsonNode secondRecord = jsonNodeTree.get(1);
+        final JsonNode expectedSecondRecord = objectMapper.readTree(VALID_RECORD_2_TEXT);
+        assertEquals(expectedSecondRecord, secondRecord);
     }
 }

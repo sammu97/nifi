@@ -16,8 +16,6 @@
  */
 package org.apache.nifi.processors.aws.credentials.provider.service;
 
-import com.amazonaws.auth.AWSCredentialsProvider;
-import com.amazonaws.auth.Signer;
 import org.apache.nifi.annotation.behavior.Restricted;
 import org.apache.nifi.annotation.behavior.Restriction;
 import org.apache.nifi.annotation.documentation.CapabilityDescription;
@@ -36,8 +34,9 @@ import org.apache.nifi.controller.ConfigurationContext;
 import org.apache.nifi.expression.ExpressionLanguageScope;
 import org.apache.nifi.migration.PropertyConfiguration;
 import org.apache.nifi.migration.ProxyServiceMigration;
-import org.apache.nifi.processor.exception.ProcessException;
+import org.apache.nifi.oauth2.OAuth2AccessTokenProvider;
 import org.apache.nifi.processor.util.StandardValidators;
+import org.apache.nifi.processors.aws.credentials.provider.AwsCredentialsProviderService;
 import org.apache.nifi.processors.aws.credentials.provider.factory.CredentialsStrategy;
 import org.apache.nifi.processors.aws.credentials.provider.factory.strategies.AccessKeyPairCredentialsStrategy;
 import org.apache.nifi.processors.aws.credentials.provider.factory.strategies.AnonymousCredentialsStrategy;
@@ -46,6 +45,7 @@ import org.apache.nifi.processors.aws.credentials.provider.factory.strategies.Ex
 import org.apache.nifi.processors.aws.credentials.provider.factory.strategies.FileCredentialsStrategy;
 import org.apache.nifi.processors.aws.credentials.provider.factory.strategies.ImplicitDefaultCredentialsStrategy;
 import org.apache.nifi.processors.aws.credentials.provider.factory.strategies.NamedProfileCredentialsStrategy;
+import org.apache.nifi.processors.aws.credentials.provider.factory.strategies.WebIdentityCredentialsStrategy;
 import org.apache.nifi.proxy.ProxyConfigurationService;
 import org.apache.nifi.ssl.SSLContextProvider;
 import software.amazon.awssdk.auth.credentials.AwsCredentialsProvider;
@@ -53,22 +53,18 @@ import software.amazon.awssdk.regions.Region;
 
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.EnumSet;
 import java.util.List;
 
-import static org.apache.nifi.processors.aws.signer.AwsSignerType.AWS_V4_SIGNER;
-import static org.apache.nifi.processors.aws.signer.AwsSignerType.CUSTOM_SIGNER;
-import static org.apache.nifi.processors.aws.signer.AwsSignerType.DEFAULT_SIGNER;
-
 /**
- * Implementation of AWSCredentialsProviderService interface
+ * Implementation of AwsCredentialsProviderService interface
  *
- * @see AWSCredentialsProviderService
+ * @see AwsCredentialsProviderService
  */
 @CapabilityDescription("Defines credentials for Amazon Web Services processors. " +
         "Uses default credentials without configuration. " +
         "Default credentials support EC2 instance profile/role, default user profile, environment variables, etc. " +
-        "Additional options include access key / secret key pairs, credentials file, named profile, and assume role credentials.")
+        "Additional options include access key / secret key pairs, credentials file, named profile, assume role credentials, " +
+        "and OAuth2 OIDC Web Identity-based temporary credentials using the same Assume Role properties.")
 @Tags({ "aws", "credentials", "provider" })
 @Restricted(
     restrictions = {
@@ -78,15 +74,20 @@ import static org.apache.nifi.processors.aws.signer.AwsSignerType.DEFAULT_SIGNER
         )
     }
 )
-public class AWSCredentialsProviderControllerService extends AbstractControllerService implements AWSCredentialsProviderService {
+public class AWSCredentialsProviderControllerService extends AbstractControllerService implements AwsCredentialsProviderService {
 
     // Obsolete property names
     private static final String OBSOLETE_PROXY_HOST = "assume-role-proxy-host";
     private static final String OBSOLETE_PROXY_PORT = "assume-role-proxy-port";
+    private static final String OBSOLETE_ASSUME_ROLE_STS_SIGNER_OVERRIDE_1 = "assume-role-sts-signer-override";
+    private static final String OBSOLETE_ASSUME_ROLE_STS_SIGNER_OVERRIDE_2 = "Assume Role STS Signer Override";
+    private static final String OBSOLETE_ASSUME_ROLE_STS_CUSTOM_SIGNER_CLASS_NAME_1 = "custom-signer-class-name";
+    private static final String OBSOLETE_ASSUME_ROLE_STS_CUSTOM_SIGNER_CLASS_NAME_2 = "Custom Signer Class Name";
+    private static final String OBSOLETE_ASSUME_ROLE_STS_CUSTOM_SIGNER_MODULE_LOCATION_1 = "custom-signer-module-location";
+    private static final String OBSOLETE_ASSUME_ROLE_STS_CUSTOM_SIGNER_MODULE_LOCATION_2 = "Custom Signer Module Location";
 
     public static final PropertyDescriptor USE_DEFAULT_CREDENTIALS = new PropertyDescriptor.Builder()
-        .name("default-credentials")
-        .displayName("Use Default Credentials")
+        .name("Use Default Credentials")
         .expressionLanguageSupported(ExpressionLanguageScope.NONE)
         .required(false)
         .addValidator(StandardValidators.BOOLEAN_VALIDATOR)
@@ -98,8 +99,7 @@ public class AWSCredentialsProviderControllerService extends AbstractControllerS
         .build();
 
     public static final PropertyDescriptor PROFILE_NAME = new PropertyDescriptor.Builder()
-        .name("profile-name")
-        .displayName("Profile Name")
+        .name("Profile Name")
         .expressionLanguageSupported(ExpressionLanguageScope.ENVIRONMENT)
         .required(false)
         .addValidator(StandardValidators.NON_EMPTY_VALIDATOR)
@@ -109,7 +109,6 @@ public class AWSCredentialsProviderControllerService extends AbstractControllerS
 
     public static final PropertyDescriptor CREDENTIALS_FILE = new PropertyDescriptor.Builder()
         .name("Credentials File")
-        .displayName("Credentials File")
         .expressionLanguageSupported(ExpressionLanguageScope.NONE)
         .required(false)
         .identifiesExternalResource(ResourceCardinality.SINGLE, ResourceType.FILE)
@@ -117,8 +116,7 @@ public class AWSCredentialsProviderControllerService extends AbstractControllerS
         .build();
 
     public static final PropertyDescriptor ACCESS_KEY_ID = new PropertyDescriptor.Builder()
-        .name("Access Key")
-        .displayName("Access Key ID")
+        .name("Access Key ID")
         .expressionLanguageSupported(ExpressionLanguageScope.ENVIRONMENT)
         .required(false)
         .addValidator(StandardValidators.NON_EMPTY_VALIDATOR)
@@ -126,8 +124,7 @@ public class AWSCredentialsProviderControllerService extends AbstractControllerS
         .build();
 
     public static final PropertyDescriptor SECRET_KEY = new PropertyDescriptor.Builder()
-        .name("Secret Key")
-        .displayName("Secret Access Key")
+        .name("Secret Access Key")
         .expressionLanguageSupported(ExpressionLanguageScope.ENVIRONMENT)
         .required(false)
         .addValidator(StandardValidators.NON_EMPTY_VALIDATOR)
@@ -135,8 +132,7 @@ public class AWSCredentialsProviderControllerService extends AbstractControllerS
         .build();
 
     public static final PropertyDescriptor USE_ANONYMOUS_CREDENTIALS = new PropertyDescriptor.Builder()
-        .name("anonymous-credentials")
-        .displayName("Use Anonymous Credentials")
+        .name("Use Anonymous Credentials")
         .expressionLanguageSupported(ExpressionLanguageScope.NONE)
         .required(false)
         .addValidator(StandardValidators.BOOLEAN_VALIDATOR)
@@ -148,7 +144,6 @@ public class AWSCredentialsProviderControllerService extends AbstractControllerS
 
     public static final PropertyDescriptor ASSUME_ROLE_ARN = new PropertyDescriptor.Builder()
         .name("Assume Role ARN")
-        .displayName("Assume Role ARN")
         .expressionLanguageSupported(ExpressionLanguageScope.NONE)
         .required(false)
         .addValidator(StandardValidators.NON_EMPTY_VALIDATOR)
@@ -158,7 +153,6 @@ public class AWSCredentialsProviderControllerService extends AbstractControllerS
 
     public static final PropertyDescriptor ASSUME_ROLE_NAME = new PropertyDescriptor.Builder()
         .name("Assume Role Session Name")
-        .displayName("Assume Role Session Name")
         .expressionLanguageSupported(ExpressionLanguageScope.NONE)
         .required(true)
         .addValidator(StandardValidators.NON_EMPTY_VALIDATOR)
@@ -168,8 +162,7 @@ public class AWSCredentialsProviderControllerService extends AbstractControllerS
         .build();
 
     public static final PropertyDescriptor ASSUME_ROLE_STS_REGION = new PropertyDescriptor.Builder()
-        .name("assume-role-sts-region")
-        .displayName("Assume Role STS Region")
+        .name("Assume Role STS Region")
         .description("The AWS Security Token Service (STS) region")
         .dependsOn(ASSUME_ROLE_ARN)
         .allowableValues(getAvailableRegions())
@@ -177,8 +170,7 @@ public class AWSCredentialsProviderControllerService extends AbstractControllerS
         .build();
 
     public static final PropertyDescriptor ASSUME_ROLE_EXTERNAL_ID = new PropertyDescriptor.Builder()
-        .name("assume-role-external-id")
-        .displayName("Assume Role External ID")
+        .name("Assume Role External ID")
         .expressionLanguageSupported(ExpressionLanguageScope.NONE)
         .required(false)
         .addValidator(StandardValidators.NON_EMPTY_VALIDATOR)
@@ -188,8 +180,7 @@ public class AWSCredentialsProviderControllerService extends AbstractControllerS
         .build();
 
     public static final PropertyDescriptor ASSUME_ROLE_SSL_CONTEXT_SERVICE = new PropertyDescriptor.Builder()
-        .name("assume-role-ssl-context-service")
-        .displayName("Assume Role SSL Context Service")
+        .name("Assume Role SSL Context Service")
         .description("SSL Context Service used when connecting to the STS Endpoint.")
         .identifiesControllerService(SSLContextProvider.class)
         .required(false)
@@ -197,8 +188,7 @@ public class AWSCredentialsProviderControllerService extends AbstractControllerS
         .build();
 
     public static final PropertyDescriptor ASSUME_ROLE_PROXY_CONFIGURATION_SERVICE = new PropertyDescriptor.Builder()
-        .name("assume-role-proxy-configuration-service")
-        .displayName("Assume Role Proxy Configuration Service")
+        .name("Assume Role Proxy Configuration Service")
         .identifiesControllerService(ProxyConfigurationService.class)
         .required(false)
         .description("Proxy configuration for cross-account access, if needed within your environment. This will configure a proxy to request for temporary access keys into another AWS account.")
@@ -206,8 +196,7 @@ public class AWSCredentialsProviderControllerService extends AbstractControllerS
         .build();
 
     public static final PropertyDescriptor ASSUME_ROLE_STS_ENDPOINT = new PropertyDescriptor.Builder()
-        .name("assume-role-sts-endpoint")
-        .displayName("Assume Role STS Endpoint Override")
+        .name("Assume Role STS Endpoint Override")
         .expressionLanguageSupported(ExpressionLanguageScope.NONE)
         .required(false)
         .addValidator(StandardValidators.NON_EMPTY_VALIDATOR)
@@ -219,20 +208,8 @@ public class AWSCredentialsProviderControllerService extends AbstractControllerS
         .dependsOn(ASSUME_ROLE_ARN)
         .build();
 
-
-    public static final PropertyDescriptor ASSUME_ROLE_STS_SIGNER_OVERRIDE = new PropertyDescriptor.Builder()
-        .name("assume-role-sts-signer-override")
-        .displayName("Assume Role STS Signer Override")
-        .description("The AWS STS library uses Signature Version 4 by default. This property allows you to plug in your own custom signer implementation.")
-        .required(false)
-        .allowableValues(EnumSet.of(DEFAULT_SIGNER, AWS_V4_SIGNER, CUSTOM_SIGNER))
-        .defaultValue(DEFAULT_SIGNER.getValue())
-        .dependsOn(ASSUME_ROLE_ARN)
-        .build();
-
     public static final PropertyDescriptor MAX_SESSION_TIME = new PropertyDescriptor.Builder()
-        .name("Session Time")
-        .displayName("Assume Role Session Time")
+        .name("Assume Role Session Time")
         .description("Session time for role based session (between 900 and 3600 seconds). This is used in conjunction with Assume Role ARN.")
         .defaultValue("3600")
         .required(false)
@@ -241,26 +218,12 @@ public class AWSCredentialsProviderControllerService extends AbstractControllerS
         .dependsOn(ASSUME_ROLE_ARN)
         .build();
 
-    public static final PropertyDescriptor ASSUME_ROLE_STS_CUSTOM_SIGNER_CLASS_NAME = new PropertyDescriptor.Builder()
-        .name("custom-signer-class-name")
-        .displayName("Custom Signer Class Name")
-        .description(String.format("Fully qualified class name of the custom signer class. The signer must implement %s interface.", Signer.class.getName()))
-        .required(true)
-        .addValidator(StandardValidators.NON_EMPTY_VALIDATOR)
-        .expressionLanguageSupported(ExpressionLanguageScope.ENVIRONMENT)
-        .dependsOn(ASSUME_ROLE_STS_SIGNER_OVERRIDE, CUSTOM_SIGNER)
-        .build();
-
-    public static final PropertyDescriptor ASSUME_ROLE_STS_CUSTOM_SIGNER_MODULE_LOCATION = new PropertyDescriptor.Builder()
-        .name("custom-signer-module-location")
-        .displayName("Custom Signer Module Location")
-        .description("Comma-separated list of paths to files and/or directories which contain the custom signer's JAR file and its dependencies (if any).")
+    public static final PropertyDescriptor OAUTH2_ACCESS_TOKEN_PROVIDER = new PropertyDescriptor.Builder()
+        .name("OAuth2 Access Token Provider")
+        .description("Controller Service providing OAuth2/OIDC tokens to exchange for AWS temporary credentials using STS AssumeRoleWithWebIdentity.")
+        .identifiesControllerService(OAuth2AccessTokenProvider.class)
         .required(false)
-        .addValidator(StandardValidators.NON_EMPTY_VALIDATOR)
-        .expressionLanguageSupported(ExpressionLanguageScope.ENVIRONMENT)
-        .identifiesExternalResource(ResourceCardinality.MULTIPLE, ResourceType.FILE, ResourceType.DIRECTORY)
-        .dependsOn(ASSUME_ROLE_STS_SIGNER_OVERRIDE, CUSTOM_SIGNER)
-        .dynamicallyModifiesClasspath(true)
+        .dependsOn(ASSUME_ROLE_ARN)
         .build();
 
 
@@ -279,16 +242,14 @@ public class AWSCredentialsProviderControllerService extends AbstractControllerS
         ASSUME_ROLE_PROXY_CONFIGURATION_SERVICE,
         ASSUME_ROLE_STS_REGION,
         ASSUME_ROLE_STS_ENDPOINT,
-        ASSUME_ROLE_STS_SIGNER_OVERRIDE,
-        ASSUME_ROLE_STS_CUSTOM_SIGNER_CLASS_NAME,
-        ASSUME_ROLE_STS_CUSTOM_SIGNER_MODULE_LOCATION
+        OAUTH2_ACCESS_TOKEN_PROVIDER
     );
 
-    private volatile ConfigurationContext context;
-    private volatile AWSCredentialsProvider credentialsProvider;
+    private volatile AwsCredentialsProvider credentialsProvider;
 
     private final List<CredentialsStrategy> strategies = List.of(
         // Primary Credential Strategies
+        new WebIdentityCredentialsStrategy(),
         new ExplicitDefaultCredentialsStrategy(),
         new AccessKeyPairCredentialsStrategy(),
         new FileCredentialsStrategy(),
@@ -310,16 +271,33 @@ public class AWSCredentialsProviderControllerService extends AbstractControllerS
     @Override
     public void migrateProperties(PropertyConfiguration config) {
         ProxyServiceMigration.migrateProxyProperties(config, ASSUME_ROLE_PROXY_CONFIGURATION_SERVICE, OBSOLETE_PROXY_HOST, OBSOLETE_PROXY_PORT, null, null);
-    }
 
-    @Override
-    public AWSCredentialsProvider getCredentialsProvider() throws ProcessException {
-        return credentialsProvider;
+        config.renameProperty("default-credentials", USE_DEFAULT_CREDENTIALS.getName());
+        config.renameProperty("profile-name", PROFILE_NAME.getName());
+        config.renameProperty("Access Key", ACCESS_KEY_ID.getName());
+        config.renameProperty("Secret Key", SECRET_KEY.getName());
+        config.renameProperty("anonymous-credentials", USE_ANONYMOUS_CREDENTIALS.getName());
+        config.renameProperty("assume-role-sts-region", ASSUME_ROLE_STS_REGION.getName());
+        config.renameProperty("assume-role-external-id", ASSUME_ROLE_EXTERNAL_ID.getName());
+        config.renameProperty("assume-role-ssl-context-service", ASSUME_ROLE_SSL_CONTEXT_SERVICE.getName());
+        config.renameProperty("assume-role-proxy-configuration-service", ASSUME_ROLE_PROXY_CONFIGURATION_SERVICE.getName());
+        config.renameProperty("assume-role-sts-endpoint", ASSUME_ROLE_STS_ENDPOINT.getName());
+        config.renameProperty("Session Time", MAX_SESSION_TIME.getName());
+
+        config.removeProperty(OBSOLETE_ASSUME_ROLE_STS_SIGNER_OVERRIDE_1);
+        config.removeProperty(OBSOLETE_ASSUME_ROLE_STS_SIGNER_OVERRIDE_2);
+        config.removeProperty(OBSOLETE_ASSUME_ROLE_STS_CUSTOM_SIGNER_CLASS_NAME_1);
+        config.removeProperty(OBSOLETE_ASSUME_ROLE_STS_CUSTOM_SIGNER_CLASS_NAME_2);
+        config.removeProperty(OBSOLETE_ASSUME_ROLE_STS_CUSTOM_SIGNER_MODULE_LOCATION_1);
+        config.removeProperty(OBSOLETE_ASSUME_ROLE_STS_CUSTOM_SIGNER_MODULE_LOCATION_2);
     }
 
     @Override
     public AwsCredentialsProvider getAwsCredentialsProvider() {
-        // Avoiding instantiation until actually used, in case v1-related configuration is not compatible with v2 clients
+        return credentialsProvider;
+    }
+
+    private AwsCredentialsProvider createCredentialsProvider(final PropertyContext context) {
         final CredentialsStrategy primaryStrategy = selectPrimaryStrategy(context);
         final AwsCredentialsProvider primaryCredentialsProvider = primaryStrategy.getAwsCredentialsProvider(context);
         AwsCredentialsProvider derivedCredentialsProvider = null;
@@ -346,7 +324,7 @@ public class AWSCredentialsProviderControllerService extends AbstractControllerS
     @Override
     protected Collection<ValidationResult> customValidate(final ValidationContext validationContext) {
         final CredentialsStrategy selectedStrategy = selectPrimaryStrategy(validationContext);
-        final ArrayList<ValidationResult> validationFailureResults = new ArrayList<>();
+        final List<ValidationResult> validationFailureResults = new ArrayList<>();
 
         for (CredentialsStrategy strategy : strategies) {
             final Collection<ValidationResult> strategyValidationFailures = strategy.validate(validationContext,
@@ -356,36 +334,38 @@ public class AWSCredentialsProviderControllerService extends AbstractControllerS
             }
         }
 
+        final boolean oauth2Configured = validationContext.getProperty(OAUTH2_ACCESS_TOKEN_PROVIDER).isSet();
+        if (oauth2Configured) {
+            final boolean roleArnSet = validationContext.getProperty(ASSUME_ROLE_ARN).isSet();
+            final boolean roleNameSet = validationContext.getProperty(ASSUME_ROLE_NAME).isSet();
+            if (!roleArnSet || !roleNameSet) {
+                validationFailureResults.add(new ValidationResult.Builder()
+                        .subject(ASSUME_ROLE_ARN.getDisplayName())
+                        .valid(false)
+                        .explanation("Web Identity (OIDC) requires both '" + ASSUME_ROLE_ARN.getDisplayName() + "' and '" + ASSUME_ROLE_NAME.getDisplayName() + "' to be set")
+                        .build());
+            }
+        }
+
+        if (validationContext.getProperty(ASSUME_ROLE_ARN).isSet()) {
+            final Integer maxSessionTime = validationContext.getProperty(MAX_SESSION_TIME).asInteger();
+            if (maxSessionTime != null && (maxSessionTime < 900 || maxSessionTime > 3600)) {
+                validationFailureResults.add(new ValidationResult.Builder()
+                        .subject(MAX_SESSION_TIME.getDisplayName())
+                        .valid(false)
+                        .explanation(MAX_SESSION_TIME.getDisplayName() + " must be between 900 and 3600 seconds")
+                        .build());
+            }
+        }
+
         return validationFailureResults;
     }
 
     @OnEnabled
     public void onConfigured(final ConfigurationContext context) {
-        this.context = context;
-
         credentialsProvider = createCredentialsProvider(context);
         getLogger().debug("Using credentials provider: {}", credentialsProvider.getClass());
     }
-
-    private AWSCredentialsProvider createCredentialsProvider(final PropertyContext propertyContext) {
-        final CredentialsStrategy primaryStrategy = selectPrimaryStrategy(propertyContext);
-        AWSCredentialsProvider primaryCredentialsProvider = primaryStrategy.getCredentialsProvider(propertyContext);
-        AWSCredentialsProvider derivedCredentialsProvider = null;
-
-        for (CredentialsStrategy strategy : strategies) {
-            if (strategy.canCreateDerivedCredential(propertyContext)) {
-                derivedCredentialsProvider = strategy.getDerivedCredentialsProvider(propertyContext, primaryCredentialsProvider);
-                break;
-            }
-        }
-
-        if (derivedCredentialsProvider != null) {
-            return derivedCredentialsProvider;
-        } else {
-            return primaryCredentialsProvider;
-        }
-    }
-
 
     public static AllowableValue[] getAvailableRegions() {
         final List<AllowableValue> values = new ArrayList<>();
@@ -404,6 +384,6 @@ public class AWSCredentialsProviderControllerService extends AbstractControllerS
 
     @Override
     public String toString() {
-        return "AWSCredentialsProviderService[id=" + getIdentifier() + "]";
+        return "AWSCredentialsProviderControllerService[id=" + getIdentifier() + "]";
     }
 }

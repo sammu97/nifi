@@ -56,6 +56,7 @@ import org.apache.nifi.controller.service.ControllerServiceNode;
 import org.apache.nifi.controller.service.ControllerServiceProvider;
 import org.apache.nifi.controller.tasks.ActiveTask;
 import org.apache.nifi.groups.ProcessGroup;
+import org.apache.nifi.lifecycle.ProcessorStopLifecycleMethods;
 import org.apache.nifi.logging.ComponentLog;
 import org.apache.nifi.logging.LogLevel;
 import org.apache.nifi.logging.LogRepositoryFactory;
@@ -92,6 +93,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.support.CronExpression;
 
+import java.lang.annotation.Annotation;
 import java.lang.management.ThreadInfo;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
@@ -916,8 +918,10 @@ public class StandardProcessorNode extends ProcessorNode implements Connectable 
 
     @Override
     public boolean isRunning() {
-        final ScheduledState state = getScheduledState();
-        return state == ScheduledState.RUNNING || state == ScheduledState.STARTING || hasActiveThreads;
+        final ScheduledState state = getPhysicalScheduledState();
+        return state == ScheduledState.RUNNING || state == ScheduledState.STARTING
+               || state == ScheduledState.STOPPING || state == ScheduledState.RUN_ONCE
+               || hasActiveThreads;
     }
 
     @Override
@@ -939,7 +943,7 @@ public class StandardProcessorNode extends ProcessorNode implements Connectable 
 
         // When getScheduledState() is called, we map the 'physical' state of STOPPING to STOPPED. This is done in order to maintain
         // backward compatibility because the UI and other clients will not know of the (relatively newer) 'STOPPING' state.
-        // Because of there previously was no STOPPING state, the way to determine of a processor had truly stopped was to check if its
+        // Because there previously was no STOPPING state, the way to determine of a processor had truly stopped was to check if its
         // Scheduled State was STOPPED AND it had no active threads.
         //
         // Also, we can have a situation in which a processor is started while invalid. Before the processor becomes valid, it can be stopped.
@@ -1189,8 +1193,6 @@ public class StandardProcessorNode extends ProcessorNode implements Connectable 
                         }
                     }
                     break;
-                    default:
-                        return results;
                 }
             }
         }
@@ -1328,8 +1330,11 @@ public class StandardProcessorNode extends ProcessorNode implements Connectable 
 
     @Override
     public void verifyCanStop() {
-        if (getScheduledState() != ScheduledState.RUNNING) {
-            throw new IllegalStateException(this + " cannot be stopped because is not scheduled to run");
+        final ScheduledState logicalState = getScheduledState();
+        final ScheduledState physicalState = getPhysicalScheduledState();
+
+        if (logicalState != ScheduledState.RUNNING && physicalState != ScheduledState.STARTING) {
+            throw new IllegalStateException(this + " cannot be stopped because is not scheduled to run and is not starting");
         }
     }
 
@@ -1380,7 +1385,7 @@ public class StandardProcessorNode extends ProcessorNode implements Connectable 
 
     @Override
     public void enable() {
-        desiredState = ScheduledState.STOPPED;
+        setDesiredState(ScheduledState.STOPPED);
         final boolean updated = scheduledState.compareAndSet(ScheduledState.DISABLED, ScheduledState.STOPPED);
 
         if (updated) {
@@ -1392,7 +1397,7 @@ public class StandardProcessorNode extends ProcessorNode implements Connectable 
 
     @Override
     public void disable() {
-        desiredState = ScheduledState.DISABLED;
+        setDesiredState(ScheduledState.DISABLED);
         final boolean updated = scheduledState.compareAndSet(ScheduledState.STOPPED, ScheduledState.DISABLED);
 
         if (updated) {
@@ -1402,6 +1407,10 @@ public class StandardProcessorNode extends ProcessorNode implements Connectable 
         }
     }
 
+    private void setDesiredState(final ScheduledState desiredState) {
+        this.desiredState = desiredState;
+        LOG.info("Desired State for {} now set to {}", this, desiredState);
+    }
 
     /**
      * Will idempotently start the processor using the following sequence: <i>
@@ -1480,10 +1489,10 @@ public class StandardProcessorNode extends ProcessorNode implements Connectable 
             if (currentState == ScheduledState.STOPPED) {
                 starting = this.scheduledState.compareAndSet(ScheduledState.STOPPED, scheduledState);
                 if (starting) {
-                    this.desiredState = desiredState;
+                    setDesiredState(desiredState);
                 }
             } else if (currentState == ScheduledState.STOPPING && !failIfStopping) {
-                this.desiredState = desiredState;
+                setDesiredState(desiredState);
                 return;
             } else {
                 starting = false;
@@ -1796,18 +1805,24 @@ public class StandardProcessorNode extends ProcessorNode implements Connectable 
      */
     @Override
     public CompletableFuture<Void> stop(final ProcessScheduler processScheduler, final ScheduledExecutorService executor, final ProcessContext processContext,
-            final SchedulingAgent schedulingAgent, final LifecycleState lifecycleState, final boolean triggerLifecycleMethods) {
+            final SchedulingAgent schedulingAgent, final LifecycleState lifecycleState, final ProcessorStopLifecycleMethods lifecycleMethods) {
 
         final Processor processor = processorRef.get().getProcessor();
         LOG.debug("Stopping processor: {}", this);
-        desiredState = ScheduledState.STOPPED;
+        setDesiredState(ScheduledState.STOPPED);
 
         final CompletableFuture<Void> future = new CompletableFuture<>();
-
         addStopFuture(future);
 
         // will ensure that the Processor represented by this node can only be stopped once
         if (this.scheduledState.compareAndSet(ScheduledState.RUNNING, ScheduledState.STOPPING) || this.scheduledState.compareAndSet(ScheduledState.RUN_ONCE, ScheduledState.STOPPING)) {
+            if (!lifecycleMethods.isTriggerOnUnscheduled() && !lifecycleMethods.isTriggerOnStopped()) {
+                // If we do not need to trigger either of the lifecycle methods, we can simply call the complete action and be done
+                completeStopAction();
+                future.complete(null);
+                return future;
+            }
+
             lifecycleState.incrementActiveThreadCount(null);
 
             // will continue to monitor active threads, invoking OnStopped once there are no
@@ -1819,17 +1834,11 @@ public class StandardProcessorNode extends ProcessorNode implements Connectable 
                         if (lifecycleState.isScheduled()) {
                             schedulingAgent.unschedule(StandardProcessorNode.this, lifecycleState);
 
-                            if (triggerLifecycleMethods) {
+                            if (lifecycleMethods.isTriggerOnUnscheduled()) {
                                 LOG.debug("Triggering @OnUnscheduled methods of {}", this);
-
-                                activateThread();
-                                try (final NarCloseable ignored = NarCloseable.withComponentNarLoader(getExtensionManager(), processor.getClass(), processor.getIdentifier())) {
-                                    ReflectionUtils.quietlyInvokeMethodsWithAnnotation(OnUnscheduled.class, processor, processContext);
-                                } finally {
-                                    deactivateThread();
-                                }
+                                triggerOnUnscheduled(processContext);
                             } else {
-                                LOG.debug("Will not trigger @OnUnscheduled methods of {} because triggerLifecycleState = false", this);
+                                LOG.debug("Will not trigger @OnUnscheduled methods of {} because ProcessorStopLifecycleMethods.isTriggerOnUnscheduled() = false", this);
                             }
                         }
 
@@ -1837,38 +1846,35 @@ public class StandardProcessorNode extends ProcessorNode implements Connectable 
                         // performing the lifecycle actions counts as 1 thread.
                         final boolean allThreadsComplete = lifecycleState.getActiveThreadCount() == 1;
                         if (allThreadsComplete) {
-                            if (triggerLifecycleMethods) {
-                                LOG.debug("Triggering @OnStopped methods of {}", this);
+                            try {
+                                if (lifecycleMethods.isTriggerOnStopped()) {
+                                    LOG.debug("Triggering @OnStopped methods of {}", this);
 
-                                activateThread();
-                                try (final NarCloseable ignored = NarCloseable.withComponentNarLoader(getExtensionManager(), processor.getClass(), processor.getIdentifier())) {
-                                    ReflectionUtils.quietlyInvokeMethodsWithAnnotation(OnStopped.class, processor, processContext);
-                                } finally {
-                                    deactivateThread();
-                                }
-                            } else {
-                                LOG.debug("Will not trigger @OnStopped methods of {} because triggerLifecycleState = false", this);
-                            }
-
-                            lifecycleState.decrementActiveThreadCount();
-                            completeStopAction();
-
-                            // This can happen only when we join a cluster. In such a case, we can inherit a flow from the cluster that says that
-                            // the Processor is to be running. However, if the Processor is already in the process of stopping, we cannot immediately
-                            // start running the Processor. As a result, we check here, since the Processor is stopped, and then immediately start the
-                            // Processor if need be.
-                            final ScheduledState desired = StandardProcessorNode.this.desiredState;
-                            if (desired == ScheduledState.RUNNING) {
-                                LOG.info("Finished stopping {} but desired state is now RUNNING so will start processor", this);
-                                getProcessGroup().startProcessor(StandardProcessorNode.this, true);
-                            } else if (desired == ScheduledState.DISABLED) {
-                                final boolean updated = scheduledState.compareAndSet(ScheduledState.STOPPED, ScheduledState.DISABLED);
-
-                                if (updated) {
-                                    LOG.info("Finished stopping {} but desired state is now DISABLED so disabled processor", this);
+                                    triggerOnStopped(processContext);
                                 } else {
-                                    LOG.info("Finished stopping {} but desired state is now DISABLED. Scheduled State could not be transitioned from STOPPED to DISABLED, "
-                                        + "though, so will allow the other thread to finish state transition. Current state is {}", this, scheduledState.get());
+                                    LOG.debug("Will not trigger @OnStopped methods of {} because ProcessorStopLifecycleMethods.isTriggerOnStopped() = false", this);
+                                }
+                            } finally {
+                                lifecycleState.decrementActiveThreadCount();
+                                completeStopAction();
+
+                                // This can happen only when we join a cluster. In such a case, we can inherit a flow from the cluster that says that
+                                // the Processor is to be running. However, if the Processor is already in the process of stopping, we cannot immediately
+                                // start running the Processor. As a result, we check here, since the Processor is stopped, and then immediately start the
+                                // Processor if need be.
+                                final ScheduledState desired = StandardProcessorNode.this.desiredState;
+                                if (desired == ScheduledState.RUNNING) {
+                                    LOG.info("Finished stopping {} but desired state is now RUNNING so will start processor", this);
+                                    getProcessGroup().startProcessor(StandardProcessorNode.this, true);
+                                } else if (desired == ScheduledState.DISABLED) {
+                                    final boolean updated = scheduledState.compareAndSet(ScheduledState.STOPPED, ScheduledState.DISABLED);
+
+                                    if (updated) {
+                                        LOG.info("Finished stopping {} but desired state is now DISABLED so disabled processor", this);
+                                    } else {
+                                        LOG.info("Finished stopping {} but desired state is now DISABLED. Scheduled State could not be transitioned from STOPPED to DISABLED, "
+                                                 + "though, so will allow the other thread to finish state transition. Current state is {}", this, scheduledState.get());
+                                    }
                                 }
                             }
                         } else {
@@ -1894,6 +1900,26 @@ public class StandardProcessorNode extends ProcessorNode implements Connectable 
         }
 
         return future;
+    }
+
+    @Override
+    public void triggerOnUnscheduled(final ProcessContext processContext) {
+        triggerLifecycleMethod(processContext, OnUnscheduled.class);
+    }
+
+    private void triggerOnStopped(final ProcessContext processContext) {
+        triggerLifecycleMethod(processContext, OnStopped.class);
+    }
+
+    private void triggerLifecycleMethod(final ProcessContext processContext, final Class<? extends Annotation> lifecycleAnnotation) {
+        final Processor processor = processorRef.get().getProcessor();
+
+        activateThread();
+        try (final NarCloseable ignored = NarCloseable.withComponentNarLoader(getExtensionManager(), processor.getClass(), processor.getIdentifier())) {
+            ReflectionUtils.quietlyInvokeMethodsWithAnnotation(lifecycleAnnotation, processor, processContext);
+        } finally {
+            deactivateThread();
+        }
     }
 
     /**

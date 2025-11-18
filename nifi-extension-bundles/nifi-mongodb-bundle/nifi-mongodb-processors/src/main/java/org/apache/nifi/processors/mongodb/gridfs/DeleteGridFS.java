@@ -31,6 +31,7 @@ import org.apache.nifi.components.ValidationContext;
 import org.apache.nifi.components.ValidationResult;
 import org.apache.nifi.expression.ExpressionLanguageScope;
 import org.apache.nifi.flowfile.FlowFile;
+import org.apache.nifi.migration.PropertyConfiguration;
 import org.apache.nifi.mongodb.MongoDBClientService;
 import org.apache.nifi.processor.ProcessContext;
 import org.apache.nifi.processor.ProcessSession;
@@ -52,8 +53,7 @@ import java.util.stream.Stream;
 @InputRequirement(InputRequirement.Requirement.INPUT_REQUIRED)
 public class DeleteGridFS extends AbstractGridFSProcessor {
     static final PropertyDescriptor QUERY = new PropertyDescriptor.Builder()
-        .name("delete-gridfs-query")
-        .displayName("Query")
+        .name("Query")
         .description("A valid MongoDB query to use to find and delete one or more files from GridFS.")
         .expressionLanguageSupported(ExpressionLanguageScope.FLOWFILE_ATTRIBUTES)
         .addValidator(JsonValidator.INSTANCE)
@@ -61,8 +61,7 @@ public class DeleteGridFS extends AbstractGridFSProcessor {
         .build();
 
     static final PropertyDescriptor FILE_NAME = new PropertyDescriptor.Builder()
-        .name("gridfs-file-name")
-        .displayName("File Name")
+        .name("File Name")
         .description("The name of the file in the bucket that is the target of this processor. GridFS file names do not " +
                 "include path information because GridFS does not sort files into folders within a bucket.")
         .expressionLanguageSupported(ExpressionLanguageScope.FLOWFILE_ATTRIBUTES)
@@ -90,8 +89,15 @@ public class DeleteGridFS extends AbstractGridFSProcessor {
     }
 
     @Override
+    public void migrateProperties(PropertyConfiguration config) {
+        super.migrateProperties(config);
+        config.renameProperty("delete-gridfs-query", QUERY.getName());
+        config.renameProperty("gridfs-file-name", FILE_NAME.getName());
+    }
+
+    @Override
     protected Collection<ValidationResult> customValidate(final ValidationContext validationContext) {
-        ArrayList<ValidationResult> problems = new ArrayList<>();
+        List<ValidationResult> problems = new ArrayList<>();
 
         boolean fileName = validationContext.getProperty(FILE_NAME).isSet();
         boolean query    = validationContext.getProperty(QUERY).isSet();

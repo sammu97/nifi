@@ -67,8 +67,12 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import static org.apache.nifi.processors.gcp.bigquery.AbstractBigQueryProcessor.DATASET;
+import static org.apache.nifi.processors.gcp.bigquery.AbstractBigQueryProcessor.TABLE_NAME;
+import static org.apache.nifi.processors.gcp.bigquery.PutBigQuery.RECORD_READER;
 import static org.apache.nifi.processors.gcp.bigquery.PutBigQuery.BATCH_TYPE;
 import static org.apache.nifi.processors.gcp.bigquery.PutBigQuery.STREAM_TYPE;
+import static org.apache.nifi.processors.gcp.bigquery.PutBigQuery.SKIP_INVALID_ROWS;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -144,7 +148,7 @@ public class PutBigQueryIT {
         runner.run();
 
         runner.assertAllFlowFilesTransferred(PutBigQuery.REL_SUCCESS, 1);
-        runner.getFlowFilesForRelationship(PutBigQuery.REL_SUCCESS).get(0).assertAttributeEquals(BigQueryAttributes.JOB_NB_RECORDS_ATTR, "2");
+        runner.getFlowFilesForRelationship(PutBigQuery.REL_SUCCESS).get(0).assertAttributeEquals(PutBigQuery.JOB_NB_RECORDS_ATTR, "2");
 
         assertStreamingData(tableName);
 
@@ -160,7 +164,7 @@ public class PutBigQueryIT {
         runner.run();
 
         runner.assertAllFlowFilesTransferred(PutBigQuery.REL_FAILURE, 1);
-        runner.getFlowFilesForRelationship(PutBigQuery.REL_FAILURE).get(0).assertAttributeEquals(BigQueryAttributes.JOB_NB_RECORDS_ATTR, "0");
+        runner.getFlowFilesForRelationship(PutBigQuery.REL_FAILURE).get(0).assertAttributeEquals(PutBigQuery.JOB_NB_RECORDS_ATTR, "0");
 
         TableResult result = bigquery.listTableData(dataset.getDatasetId().getDataset(), tableName, schema);
         assertFalse(result.getValues().iterator().hasNext());
@@ -173,13 +177,13 @@ public class PutBigQueryIT {
         String tableName = prepareTable(STREAM_TYPE);
         addRecordReader();
 
-        runner.setProperty(BigQueryAttributes.SKIP_INVALID_ROWS_ATTR, "true");
+        runner.setProperty(SKIP_INVALID_ROWS, "true");
 
         runner.enqueue(Paths.get("src/test/resources/bigquery/streaming-bad-data.json"));
         runner.run();
 
         runner.assertAllFlowFilesTransferred(PutBigQuery.REL_SUCCESS, 1);
-        runner.getFlowFilesForRelationship(PutBigQuery.REL_SUCCESS).get(0).assertAttributeEquals(BigQueryAttributes.JOB_NB_RECORDS_ATTR, "1");
+        runner.getFlowFilesForRelationship(PutBigQuery.REL_SUCCESS).get(0).assertAttributeEquals(PutBigQuery.JOB_NB_RECORDS_ATTR, "1");
 
         TableResult result = bigquery.listTableData(dataset.getDatasetId().getDataset(), tableName, schema);
         Iterator<FieldValueList> iterator = result.getValues().iterator();
@@ -200,7 +204,7 @@ public class PutBigQueryIT {
         runner.run();
 
         runner.assertAllFlowFilesTransferred(PutBigQuery.REL_SUCCESS, 1);
-        runner.getFlowFilesForRelationship(PutBigQuery.REL_SUCCESS).get(0).assertAttributeEquals(BigQueryAttributes.JOB_NB_RECORDS_ATTR, "2");
+        runner.getFlowFilesForRelationship(PutBigQuery.REL_SUCCESS).get(0).assertAttributeEquals(PutBigQuery.JOB_NB_RECORDS_ATTR, "2");
 
         assertStreamingData(tableName, true, false);
 
@@ -218,16 +222,17 @@ public class PutBigQueryIT {
         runner.setProperty(jsonReader, SchemaAccessUtils.SCHEMA_TEXT, recordSchema);
         runner.setProperty(jsonReader, DateTimeUtils.DATE_FORMAT, "MM/dd/yyyy");
         runner.setProperty(jsonReader, DateTimeUtils.TIME_FORMAT, "HH:mm:ss");
-        runner.setProperty(jsonReader, DateTimeUtils.TIMESTAMP_FORMAT, "MM-dd-yyyy HH:mm:ss Z");
+        // Use zone name format to parse values like "UTC"
+        runner.setProperty(jsonReader, DateTimeUtils.TIMESTAMP_FORMAT, "MM-dd-yyyy HH:mm:ss z");
         runner.enableControllerService(jsonReader);
 
-        runner.setProperty(BigQueryAttributes.RECORD_READER_ATTR, "reader");
+        runner.setProperty(RECORD_READER, "reader");
 
         runner.enqueue(Paths.get("src/test/resources/bigquery/streaming-correct-data-with-date-formatted.json"));
 
         runner.run();
         runner.assertAllFlowFilesTransferred(PutBigQuery.REL_SUCCESS, 1);
-        runner.getFlowFilesForRelationship(PutBigQuery.REL_SUCCESS).get(0).assertAttributeEquals(BigQueryAttributes.JOB_NB_RECORDS_ATTR, "2");
+        runner.getFlowFilesForRelationship(PutBigQuery.REL_SUCCESS).get(0).assertAttributeEquals(PutBigQuery.JOB_NB_RECORDS_ATTR, "2");
 
         assertStreamingData(tableName, false, true);
 
@@ -244,7 +249,7 @@ public class PutBigQueryIT {
         runner.run();
 
         runner.assertAllFlowFilesTransferred(PutBigQuery.REL_SUCCESS, 1);
-        runner.getFlowFilesForRelationship(PutBigQuery.REL_SUCCESS).get(0).assertAttributeEquals(BigQueryAttributes.JOB_NB_RECORDS_ATTR, "1");
+        runner.getFlowFilesForRelationship(PutBigQuery.REL_SUCCESS).get(0).assertAttributeEquals(PutBigQuery.JOB_NB_RECORDS_ATTR, "1");
 
         deleteTable(tableName);
     }
@@ -287,7 +292,7 @@ public class PutBigQueryIT {
         runner.run();
 
         runner.assertAllFlowFilesTransferred(AbstractBigQueryProcessor.REL_SUCCESS, 1);
-        runner.getFlowFilesForRelationship(PutBigQuery.REL_SUCCESS).get(0).assertAttributeEquals(BigQueryAttributes.JOB_NB_RECORDS_ATTR, Integer.toString(recordCount));
+        runner.getFlowFilesForRelationship(PutBigQuery.REL_SUCCESS).get(0).assertAttributeEquals(PutBigQuery.JOB_NB_RECORDS_ATTR, Integer.toString(recordCount));
     }
 
     @Test
@@ -304,8 +309,8 @@ public class PutBigQueryIT {
         // create table
         bigquery.create(tableInfo);
 
-        runner.setProperty(BigQueryAttributes.DATASET_ATTR, dataset.getDatasetId().getDataset());
-        runner.setProperty(BigQueryAttributes.TABLE_NAME_ATTR, tableName);
+        runner.setProperty(DATASET, dataset.getDatasetId().getDataset());
+        runner.setProperty(TABLE_NAME, tableName);
         runner.setProperty(PutBigQuery.TRANSFER_TYPE, BATCH_TYPE);
 
         AvroReader reader = new AvroReader();
@@ -316,7 +321,7 @@ public class PutBigQueryIT {
         runner.setProperty(reader, SchemaAccessUtils.SCHEMA_TEXT, recordSchema);
 
         runner.enableControllerService(reader);
-        runner.setProperty(BigQueryAttributes.RECORD_READER_ATTR, "reader");
+        runner.setProperty(RECORD_READER, "reader");
 
         runner.enqueue(Paths.get("src/test/resources/bigquery/avrodecimal.avro"));
 
@@ -345,8 +350,8 @@ public class PutBigQueryIT {
         // create table
         bigquery.create(tableInfo);
 
-        runner.setProperty(BigQueryAttributes.DATASET_ATTR, dataset.getDatasetId().getDataset());
-        runner.setProperty(BigQueryAttributes.TABLE_NAME_ATTR, tableName);
+        runner.setProperty(DATASET, dataset.getDatasetId().getDataset());
+        runner.setProperty(TABLE_NAME, tableName);
         runner.setProperty(PutBigQuery.TRANSFER_TYPE, BATCH_TYPE);
 
         AvroReader reader = new AvroReader();
@@ -357,7 +362,7 @@ public class PutBigQueryIT {
         runner.setProperty(reader, SchemaAccessUtils.SCHEMA_TEXT, recordSchema);
 
         runner.enableControllerService(reader);
-        runner.setProperty(BigQueryAttributes.RECORD_READER_ATTR, "reader");
+        runner.setProperty(RECORD_READER, "reader");
 
         runner.enqueue(Paths.get("src/test/resources/bigquery/avrofloat.avro"));
 
@@ -386,8 +391,8 @@ public class PutBigQueryIT {
         // create table
         bigquery.create(tableInfo);
 
-        runner.setProperty(BigQueryAttributes.DATASET_ATTR, dataset.getDatasetId().getDataset());
-        runner.setProperty(BigQueryAttributes.TABLE_NAME_ATTR, tableName);
+        runner.setProperty(DATASET, dataset.getDatasetId().getDataset());
+        runner.setProperty(TABLE_NAME, tableName);
         runner.setProperty(PutBigQuery.TRANSFER_TYPE, BATCH_TYPE);
 
         AvroReader reader = new AvroReader();
@@ -398,7 +403,7 @@ public class PutBigQueryIT {
         runner.setProperty(reader, SchemaAccessUtils.SCHEMA_TEXT, recordSchema);
 
         runner.enableControllerService(reader);
-        runner.setProperty(BigQueryAttributes.RECORD_READER_ATTR, "reader");
+        runner.setProperty(RECORD_READER, "reader");
 
         runner.enqueue(Paths.get("src/test/resources/bigquery/avroint.avro"));
 
@@ -422,8 +427,8 @@ public class PutBigQueryIT {
             createTableForBatch(tableName);
         }
 
-        runner.setProperty(BigQueryAttributes.DATASET_ATTR, dataset.getDatasetId().getDataset());
-        runner.setProperty(BigQueryAttributes.TABLE_NAME_ATTR, tableName);
+        runner.setProperty(DATASET, dataset.getDatasetId().getDataset());
+        runner.setProperty(TABLE_NAME, tableName);
         runner.setProperty(PutBigQuery.TRANSFER_TYPE, transferType);
 
         return tableName;
@@ -434,13 +439,13 @@ public class PutBigQueryIT {
         runner.addControllerService("reader", jsonReader);
         runner.enableControllerService(jsonReader);
 
-        runner.setProperty(BigQueryAttributes.RECORD_READER_ATTR, "reader");
+        runner.setProperty(RECORD_READER, "reader");
     }
 
     private void addRecordReaderWithSchema(String schema) throws InitializationException, IOException {
         JsonTreeReader jsonReader = new JsonTreeReader();
         runner.addControllerService("reader", jsonReader);
-        runner.setProperty(BigQueryAttributes.RECORD_READER_ATTR, "reader");
+        runner.setProperty(RECORD_READER, "reader");
 
         String recordSchema = new String(Files.readAllBytes(Paths.get(schema)));
         runner.setProperty(jsonReader, SchemaAccessUtils.SCHEMA_ACCESS_STRATEGY, SchemaAccessUtils.SCHEMA_TEXT_PROPERTY);
@@ -468,7 +473,8 @@ public class PutBigQueryIT {
         Field date = Field.newBuilder("date", LegacySQLTypeName.DATE).setMode(Field.Mode.NULLABLE).build();
         Field time = Field.newBuilder("time", LegacySQLTypeName.TIME).setMode(Field.Mode.NULLABLE).build();
         Field full = Field.newBuilder("full", LegacySQLTypeName.TIMESTAMP).setMode(Field.Mode.NULLABLE).build();
-        Field birth = Field.newBuilder("birth", LegacySQLTypeName.RECORD, date, time, full).setMode(Field.Mode.NULLABLE).build();
+        Field datetime = Field.newBuilder("datetime", StandardSQLTypeName.DATETIME).setMode(Field.Mode.NULLABLE).build();
+        Field birth = Field.newBuilder("birth", LegacySQLTypeName.RECORD, date, time, full, datetime).setMode(Field.Mode.NULLABLE).build();
 
         Field numeric = Field.newBuilder("numeric", StandardSQLTypeName.NUMERIC).setMode(Field.Mode.NULLABLE).build();
         Field floatc = Field.newBuilder("floatc", StandardSQLTypeName.FLOAT64).setMode(Field.Mode.NULLABLE).build();

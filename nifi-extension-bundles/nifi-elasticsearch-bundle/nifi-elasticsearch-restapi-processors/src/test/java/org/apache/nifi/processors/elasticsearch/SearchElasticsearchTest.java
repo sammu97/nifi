@@ -31,7 +31,6 @@ import java.time.Instant;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.junit.jupiter.api.Assertions.fail;
 
 public class SearchElasticsearchTest extends AbstractPaginatedJsonQueryElasticsearchTest {
     @BeforeAll
@@ -39,14 +38,17 @@ public class SearchElasticsearchTest extends AbstractPaginatedJsonQueryElasticse
         AbstractPaginatedJsonQueryElasticsearchTest.setUpBeforeClass();
     }
 
+    @Override
     AbstractPaginatedJsonQueryElasticsearch getProcessor() {
         return new SearchElasticsearch();
     }
 
+    @Override
     Scope getStateScope() {
         return Scope.LOCAL;
     }
 
+    @Override
     boolean isInput() {
         return false;
     }
@@ -247,8 +249,6 @@ public class SearchElasticsearchTest extends AbstractPaginatedJsonQueryElasticse
                     stateManager.assertStateNotSet(SearchElasticsearch.STATE_PIT_ID, getStateScope());
                     stateManager.assertStateEquals(SearchElasticsearch.STATE_SEARCH_AFTER, "[\"searchAfter-" + pageCount + "\"]", getStateScope());
                     break;
-                default:
-                    fail("Unknown paginationType: " + paginationType);
             }
         }
     }

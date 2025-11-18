@@ -87,7 +87,8 @@ public class StatelessReloadComponent implements ReloadComponent {
 
         // call OnRemoved for the existing processor using the previous instance class loader
         try (final NarCloseable ignored = NarCloseable.withComponentNarLoader(existingInstanceClassLoader)) {
-            final StateManager stateManager = statelessEngine.getStateManagerProvider().getStateManager(id);
+            final Class<?> componentClass = existingNode.getProcessor() == null ? null : existingNode.getProcessor().getClass();
+            final StateManager stateManager = statelessEngine.getStateManagerProvider().getStateManager(id, componentClass);
             final StandardProcessContext processContext = new StandardProcessContext(existingNode, statelessEngine.getControllerServiceProvider(),
                 stateManager, () -> false, new StatelessNodeTypeProvider());
 
@@ -97,7 +98,7 @@ public class StatelessReloadComponent implements ReloadComponent {
         }
 
         // set the new processor in the existing node
-        final ComponentLog componentLogger = new SimpleProcessLogger(id, newNode.getProcessor(), new StandardLoggingContext(null));
+        final ComponentLog componentLogger = new SimpleProcessLogger(id, newNode.getProcessor(), new StandardLoggingContext(newNode));
         final TerminationAwareLogger terminationAwareLogger = new TerminationAwareLogger(componentLogger);
         LogRepositoryFactory.getRepository(id).setLogger(terminationAwareLogger);
 
@@ -109,8 +110,9 @@ public class StatelessReloadComponent implements ReloadComponent {
         existingNode.refreshProperties();
 
         // Notify the processor node that the configuration (properties, e.g.) has been restored
+        final Class<?> componentClass = existingNode.getProcessor() == null ? null : existingNode.getProcessor().getClass();
         final StandardProcessContext processContext = new StandardProcessContext(existingNode, statelessEngine.getControllerServiceProvider(),
-                statelessEngine.getStateManagerProvider().getStateManager(id), () -> false, new StatelessNodeTypeProvider());
+                statelessEngine.getStateManagerProvider().getStateManager(id, componentClass), () -> false, new StatelessNodeTypeProvider());
         existingNode.onConfigurationRestored(processContext);
 
         logger.debug("Successfully reloaded {}", existingNode);
@@ -155,7 +157,7 @@ public class StatelessReloadComponent implements ReloadComponent {
         invocationHandler.setServiceNode(existingNode);
 
         // create LoggableComponents for the proxy and implementation
-        final ComponentLog componentLogger = new SimpleProcessLogger(id, newNode.getControllerServiceImplementation(), new StandardLoggingContext(null));
+        final ComponentLog componentLogger = new SimpleProcessLogger(id, newNode.getControllerServiceImplementation(), new StandardLoggingContext(newNode));
         final TerminationAwareLogger terminationAwareLogger = new TerminationAwareLogger(componentLogger);
         LogRepositoryFactory.getRepository(id).setLogger(terminationAwareLogger);
 
@@ -203,7 +205,7 @@ public class StatelessReloadComponent implements ReloadComponent {
         }
 
         // set the new reporting task into the existing node
-        final ComponentLog componentLogger = new SimpleProcessLogger(id, existingNode.getReportingTask(), new StandardLoggingContext(null));
+        final ComponentLog componentLogger = new SimpleProcessLogger(id, existingNode.getReportingTask(), new StandardLoggingContext());
         final TerminationAwareLogger terminationAwareLogger = new TerminationAwareLogger(componentLogger);
         LogRepositoryFactory.getRepository(id).setLogger(terminationAwareLogger);
 
@@ -248,7 +250,7 @@ public class StatelessReloadComponent implements ReloadComponent {
         }
 
         // set the new reporting task into the existing node
-        final ComponentLog componentLogger = new SimpleProcessLogger(id, existingNode.getParameterProvider(), new StandardLoggingContext(null));
+        final ComponentLog componentLogger = new SimpleProcessLogger(id, existingNode.getParameterProvider(), new StandardLoggingContext());
         final TerminationAwareLogger terminationAwareLogger = new TerminationAwareLogger(componentLogger);
         LogRepositoryFactory.getRepository(id).setLogger(terminationAwareLogger);
 
@@ -286,7 +288,7 @@ public class StatelessReloadComponent implements ReloadComponent {
         extensionManager.closeURLClassLoader(id, existingInstanceClassLoader);
 
         // set the new flow registry client into the existing node
-        final ComponentLog componentLogger = new SimpleProcessLogger(id, existingNode.getComponent(), new StandardLoggingContext(null));
+        final ComponentLog componentLogger = new SimpleProcessLogger(id, existingNode.getComponent(), new StandardLoggingContext());
         final TerminationAwareLogger terminationAwareLogger = new TerminationAwareLogger(componentLogger);
         LogRepositoryFactory.getRepository(id).setLogger(terminationAwareLogger);
 

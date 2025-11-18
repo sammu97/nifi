@@ -26,7 +26,6 @@ import org.apache.nifi.components.ValidationResult;
 import org.apache.nifi.context.PropertyContext;
 import org.apache.nifi.processors.aws.credentials.provider.factory.CredentialsStrategy;
 
-import com.amazonaws.auth.AWSCredentialsProvider;
 import software.amazon.awssdk.auth.credentials.AwsCredentialsProvider;
 
 
@@ -80,8 +79,7 @@ public abstract class AbstractCredentialsStrategy implements CredentialsStrategy
         return validationFailureResults;
     }
 
-    public abstract AWSCredentialsProvider getCredentialsProvider(final PropertyContext propertyContext);
-
+    @Override
     public String getName() {
         return name;
     }
@@ -90,12 +88,6 @@ public abstract class AbstractCredentialsStrategy implements CredentialsStrategy
     @Override
     public boolean canCreateDerivedCredential(final PropertyContext propertyContext) {
         return false;
-    }
-
-    @Override
-    public AWSCredentialsProvider getDerivedCredentialsProvider(final PropertyContext propertyContext,
-                                                                final AWSCredentialsProvider primaryCredentialsProvider) {
-        return null;
     }
 
     @Override

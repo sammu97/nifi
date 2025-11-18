@@ -17,6 +17,9 @@
 
 package org.apache.nifi.registry.flow.git;
 
+import org.apache.nifi.components.ConfigVerificationResult;
+import org.apache.nifi.components.ConfigVerificationResult.Outcome;
+import org.apache.nifi.components.DescribedValue;
 import org.apache.nifi.components.PropertyDescriptor;
 import org.apache.nifi.components.ValidationContext;
 import org.apache.nifi.components.ValidationResult;
@@ -25,7 +28,10 @@ import org.apache.nifi.flow.Position;
 import org.apache.nifi.flow.VersionedComponent;
 import org.apache.nifi.flow.VersionedConnection;
 import org.apache.nifi.flow.VersionedFlowCoordinates;
+import org.apache.nifi.flow.VersionedParameter;
+import org.apache.nifi.flow.VersionedParameterContext;
 import org.apache.nifi.flow.VersionedProcessGroup;
+import org.apache.nifi.logging.ComponentLog;
 import org.apache.nifi.processor.util.StandardValidators;
 import org.apache.nifi.registry.flow.AbstractFlowRegistryClient;
 import org.apache.nifi.registry.flow.AuthorizationException;
@@ -34,6 +40,7 @@ import org.apache.nifi.registry.flow.FlowAlreadyExistsException;
 import org.apache.nifi.registry.flow.FlowLocation;
 import org.apache.nifi.registry.flow.FlowRegistryBranch;
 import org.apache.nifi.registry.flow.FlowRegistryBucket;
+import org.apache.nifi.registry.flow.FlowRegistryClient;
 import org.apache.nifi.registry.flow.FlowRegistryClientConfigurationContext;
 import org.apache.nifi.registry.flow.FlowRegistryClientInitializationContext;
 import org.apache.nifi.registry.flow.FlowRegistryException;
@@ -43,6 +50,7 @@ import org.apache.nifi.registry.flow.RegisterAction;
 import org.apache.nifi.registry.flow.RegisteredFlow;
 import org.apache.nifi.registry.flow.RegisteredFlowSnapshot;
 import org.apache.nifi.registry.flow.RegisteredFlowSnapshotMetadata;
+import org.apache.nifi.registry.flow.VerifiableFlowRegistryClient;
 import org.apache.nifi.registry.flow.git.client.GitCommit;
 import org.apache.nifi.registry.flow.git.client.GitCreateContentRequest;
 import org.apache.nifi.registry.flow.git.client.GitRepositoryClient;
@@ -57,16 +65,18 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Function;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 /**
  * Base class for git-based flow registry clients.
  */
-public abstract class AbstractGitFlowRegistryClient extends AbstractFlowRegistryClient {
+public abstract class AbstractGitFlowRegistryClient extends AbstractFlowRegistryClient implements VerifiableFlowRegistryClient {
 
     public static final PropertyDescriptor REPOSITORY_BRANCH = new PropertyDescriptor.Builder()
             .name("Default Branch")
@@ -90,6 +100,14 @@ public abstract class AbstractGitFlowRegistryClient extends AbstractFlowRegistry
                     + "when listing buckets.")
             .defaultValue("[.].*")
             .addValidator(StandardValidators.REGULAR_EXPRESSION_VALIDATOR)
+            .required(true)
+            .build();
+
+    public static final PropertyDescriptor PARAMETER_CONTEXT_VALUES = new PropertyDescriptor.Builder()
+            .name("Parameter Context Values")
+            .description("Specifies what to do with parameter values when storing the versioned flow.")
+            .allowableValues(ParameterContextValuesStrategy.class)
+            .defaultValue(ParameterContextValuesStrategy.RETAIN)
             .required(true)
             .build();
 
@@ -121,6 +139,7 @@ public abstract class AbstractGitFlowRegistryClient extends AbstractFlowRegistry
         combinedPropertyDescriptors.add(REPOSITORY_BRANCH);
         combinedPropertyDescriptors.add(REPOSITORY_PATH);
         combinedPropertyDescriptors.add(DIRECTORY_FILTER_EXCLUDE);
+        combinedPropertyDescriptors.add(PARAMETER_CONTEXT_VALUES);
         propertyDescriptors = Collections.unmodifiableList(combinedPropertyDescriptors);
 
         flowSnapshotSerializer = createFlowSnapshotSerializer();
@@ -345,7 +364,37 @@ public abstract class AbstractGitFlowRegistryClient extends AbstractFlowRegistry
         flowSnapshot.getSnapshotMetadata().setBranch(null);
         flowSnapshot.getSnapshotMetadata().setVersion(null);
         flowSnapshot.getSnapshotMetadata().setComments(null);
-        flowSnapshot.getSnapshotMetadata().setTimestamp(0);
+
+        final ParameterContextValuesStrategy parameterContextValuesStrategy = context.getProperty(PARAMETER_CONTEXT_VALUES).asAllowableValue(ParameterContextValuesStrategy.class);
+        final Map<String, VersionedParameterContext> parameterContexts = flowSnapshot.getParameterContexts();
+        if (parameterContexts != null) {
+            if (ParameterContextValuesStrategy.REMOVE.equals(parameterContextValuesStrategy)) {
+                // remove all parameter values if configured to do so
+                parameterContexts.forEach((name, parameterContext) ->
+                    parameterContext.getParameters().forEach(parameter -> parameter.setValue(null))
+                );
+            } else if (ParameterContextValuesStrategy.IGNORE_CHANGES.equals(parameterContextValuesStrategy)) {
+                // ignore changes on existing parameters if configured to do so
+                final Map<String, VersionedParameterContext> existingParameterContexts = existingSnapshot.getParameterContexts();
+                if (existingParameterContexts != null) {
+                    existingParameterContexts.forEach((name, parameterContext) -> {
+                        final VersionedParameterContext targetContext = parameterContexts.get(name);
+                        if (targetContext != null) {
+                            final Map<String, VersionedParameter> targetParamMap = targetContext.getParameters()
+                                    .stream()
+                                    .collect(Collectors.toMap(VersionedParameter::getName, Function.identity()));
+
+                            parameterContext.getParameters().forEach(parameter -> {
+                                final VersionedParameter targetParam = targetParamMap.get(parameter.getName());
+                                if (targetParam != null) {
+                                    targetParam.setValue(parameter.getValue());
+                                }
+                            });
+                        }
+                    });
+                }
+            }
+        }
 
         // replace the id of the top level group and all of its references with a constant value prior to serializing to avoid
         // unnecessary diffs when different instances of the same flow are imported and have different top-level PG ids
@@ -627,6 +676,102 @@ public abstract class AbstractGitFlowRegistryClient extends AbstractFlowRegistry
         );
     }
 
+    @Override
+    public List<ConfigVerificationResult> verify(final FlowRegistryClientConfigurationContext context, final ComponentLog verificationLogger,
+            final Map<String, String> variables) {
+        final List<ConfigVerificationResult> results = new ArrayList<>();
+        GitRepositoryClient verificationClient = null;
+        String storageLocation = null;
+
+        try {
+            try {
+                verificationClient = createRepositoryClient(context);
+                storageLocation = getStorageLocation(verificationClient);
+
+                final String repositoryDescription = storageLocation == null ? "configured repository" : storageLocation;
+                results.add(new ConfigVerificationResult.Builder()
+                        .outcome(Outcome.SUCCESSFUL)
+                        .verificationStepName("Authenticate with Repository")
+                        .explanation("Successfully authenticated with repository [" + repositoryDescription + "]")
+                        .build());
+            } catch (final Exception e) {
+                final String message = "Failed to authenticate with the configured repository: " + e.getMessage();
+                verificationLogger.error(message, e);
+                results.add(new ConfigVerificationResult.Builder()
+                        .outcome(Outcome.FAILED)
+                        .verificationStepName("Authenticate with Repository")
+                        .explanation(message)
+                        .build());
+                return results;
+            }
+
+            final String repositoryDescription = storageLocation == null ? "configured repository" : storageLocation;
+
+            final boolean canRead = verificationClient.hasReadPermission();
+            final ConfigVerificationResult.Builder readVerification = new ConfigVerificationResult.Builder()
+                    .verificationStepName("Verify Read Access");
+            if (canRead) {
+                readVerification.outcome(Outcome.SUCCESSFUL)
+                        .explanation("Confirmed read access to repository [" + repositoryDescription + "]");
+            } else {
+                readVerification.outcome(Outcome.FAILED)
+                        .explanation("Configured credentials do not have read access to repository [" + repositoryDescription + "]");
+            }
+            results.add(readVerification.build());
+
+            final ConfigVerificationResult.Builder bucketVerification = new ConfigVerificationResult.Builder()
+                    .verificationStepName("List Buckets");
+            if (canRead) {
+                try {
+                    String branch = context.getProperty(REPOSITORY_BRANCH).getValue();
+                    if (StringUtils.isBlank(branch)) {
+                        branch = FlowRegistryClient.DEFAULT_BRANCH_NAME;
+                    }
+
+                    final String exclusionPatternValue = context.getProperty(DIRECTORY_FILTER_EXCLUDE).getValue();
+                    final Pattern exclusionPattern = Pattern.compile(exclusionPatternValue);
+                    final Set<String> bucketDirectoryNames = verificationClient.getTopLevelDirectoryNames(branch);
+                    final long visibleBucketCount = bucketDirectoryNames.stream()
+                            .filter(bucketName -> !exclusionPattern.matcher(bucketName).matches())
+                            .count();
+                    final String explanation = String.format("Found %d visible bucket%s on branch [%s] in repository [%s]",
+                            visibleBucketCount, visibleBucketCount == 1 ? "" : "s", branch, repositoryDescription);
+                    bucketVerification.outcome(Outcome.SUCCESSFUL).explanation(explanation);
+                } catch (final Exception e) {
+                    final String message = "Failed to list buckets: " + e.getMessage();
+                    verificationLogger.error(message, e);
+                    bucketVerification.outcome(Outcome.FAILED).explanation(message);
+                }
+            } else {
+                bucketVerification.outcome(Outcome.SKIPPED)
+                        .explanation("Skipped listing buckets because the configured credentials do not have read access to the repository");
+            }
+            results.add(bucketVerification.build());
+
+            final boolean canWrite = verificationClient.hasWritePermission();
+            final ConfigVerificationResult.Builder writeVerification = new ConfigVerificationResult.Builder()
+                    .verificationStepName("Verify Write Access");
+            if (canWrite) {
+                writeVerification.outcome(Outcome.SUCCESSFUL)
+                        .explanation("Configured credentials have write access to repository [" + repositoryDescription + "]");
+            } else {
+                writeVerification.outcome(Outcome.FAILED)
+                        .explanation("Configured credentials do not have write access to repository [" + repositoryDescription + "]");
+            }
+            results.add(writeVerification.build());
+
+            return results;
+        } finally {
+            if (verificationClient != null) {
+                try {
+                    verificationClient.close();
+                } catch (final Exception e) {
+                    verificationLogger.warn("Failed to close repository client after verification", e);
+                }
+            }
+        }
+    }
+
     /**
      * Create the property descriptors for this client.
      *
@@ -655,5 +800,34 @@ public abstract class AbstractGitFlowRegistryClient extends AbstractFlowRegistry
     // protected to allow for overriding from tests
     protected FlowSnapshotSerializer createFlowSnapshotSerializer() {
         return new JacksonFlowSnapshotSerializer();
+    }
+
+    enum ParameterContextValuesStrategy implements DescribedValue {
+        RETAIN("Retain", "Retain Values in Parameter Contexts without modifications"),
+        REMOVE("Remove", "Remove Values from Parameter Context"),
+        IGNORE_CHANGES("Ignore Changes", "Ignore any change on existing parameters");
+
+        private final String displayName;
+        private final String description;
+
+        ParameterContextValuesStrategy(final String displayName, final String description) {
+            this.displayName = displayName;
+            this.description = description;
+        }
+
+        @Override
+        public String getValue() {
+            return name();
+        }
+
+        @Override
+        public String getDisplayName() {
+            return displayName;
+        }
+
+        @Override
+        public String getDescription() {
+            return description;
+        }
     }
 }

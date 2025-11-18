@@ -20,6 +20,7 @@ import { GarbageCollection } from '../system-diagnostics';
 import {
     AffectedComponentEntity,
     BulletinEntity,
+    ComponentType,
     Parameter,
     ParameterContextReferenceEntity,
     Permissions,
@@ -117,10 +118,6 @@ export interface EditTenantResponse {
     revision: Revision;
     user?: any;
     userGroup?: any;
-}
-
-export interface CreateControllerServiceDialogRequest {
-    controllerServiceTypes: DocumentedType[];
 }
 
 export interface EditControllerServiceDialogRequest {
@@ -247,6 +244,11 @@ export interface ValidationErrorsTipInput {
 
 export interface BulletinsTipInput {
     bulletins: BulletinEntity[];
+}
+
+export interface PropertyValueTipInput {
+    parameters: ParameterEntity[];
+    property: Property;
 }
 
 export interface PropertyTipInput {
@@ -584,4 +586,18 @@ export interface OpenChangeComponentVersionDialogRequest {
 export interface ExternalControllerServiceReference {
     identifier: string;
     name: string;
+}
+
+export interface ClearBulletinsRequest {
+    uri: string;
+    fromTimestamp: string;
+    componentId: string;
+    componentType: ComponentType;
+}
+
+export interface ClearBulletinsResponse {
+    componentId: string;
+    bulletinsCleared: number;
+    bulletins: BulletinEntity[];
+    componentType: ComponentType;
 }

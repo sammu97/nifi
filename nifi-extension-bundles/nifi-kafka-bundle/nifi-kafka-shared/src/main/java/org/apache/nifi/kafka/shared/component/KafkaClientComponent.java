@@ -18,9 +18,11 @@ package org.apache.nifi.kafka.shared.component;
 
 import org.apache.nifi.components.PropertyDescriptor;
 import org.apache.nifi.expression.ExpressionLanguageScope;
+import org.apache.nifi.kafka.shared.property.AwsRoleSource;
 import org.apache.nifi.kafka.shared.property.SaslMechanism;
 import org.apache.nifi.kafka.shared.property.SecurityProtocol;
 import org.apache.nifi.kerberos.SelfContainedKerberosUserService;
+import org.apache.nifi.oauth2.OAuth2AccessTokenProvider;
 import org.apache.nifi.processor.util.StandardValidators;
 import org.apache.nifi.ssl.SSLContextService;
 
@@ -31,12 +33,11 @@ public interface KafkaClientComponent {
 
     PropertyDescriptor BOOTSTRAP_SERVERS = new PropertyDescriptor.Builder()
             .name("bootstrap.servers")
-            .displayName("Kafka Brokers")
-            .description("Comma-separated list of Kafka Brokers in the format host:port")
+            .displayName("Bootstrap Servers")
+            .description("Comma-separated list of Kafka Bootstrap Servers in the format host:port. Corresponds to Kafka bootstrap.servers property")
             .required(true)
             .addValidator(StandardValidators.HOSTNAME_PORT_LIST_VALIDATOR)
-            .expressionLanguageSupported(ExpressionLanguageScope.ENVIRONMENT)
-            .defaultValue("localhost:9092")
+            .expressionLanguageSupported(ExpressionLanguageScope.NONE)
             .build();
 
     PropertyDescriptor SECURITY_PROTOCOL = new PropertyDescriptor.Builder()
@@ -57,13 +58,16 @@ public interface KafkaClientComponent {
             .expressionLanguageSupported(ExpressionLanguageScope.NONE)
             .allowableValues(SaslMechanism.getAvailableSaslMechanisms())
             .defaultValue(SaslMechanism.GSSAPI)
+            .dependsOn(SECURITY_PROTOCOL,
+                    SecurityProtocol.SASL_PLAINTEXT.name(),
+                    SecurityProtocol.SASL_SSL.name())
             .build();
 
     PropertyDescriptor SASL_USERNAME = new PropertyDescriptor.Builder()
             .name("sasl.username")
-            .displayName("Username")
+            .displayName("SASL Username")
             .description("Username provided with configured password when using PLAIN or SCRAM SASL Mechanisms")
-            .required(false)
+            .required(true)
             .addValidator(StandardValidators.NON_BLANK_VALIDATOR)
             .expressionLanguageSupported(ExpressionLanguageScope.ENVIRONMENT)
             .dependsOn(
@@ -76,9 +80,9 @@ public interface KafkaClientComponent {
 
     PropertyDescriptor SASL_PASSWORD = new PropertyDescriptor.Builder()
             .name("sasl.password")
-            .displayName("Password")
+            .displayName("SASL Password")
             .description("Password provided with configured username when using PLAIN or SCRAM SASL Mechanisms")
-            .required(false)
+            .required(true)
             .sensitive(true)
             .addValidator(StandardValidators.NON_BLANK_VALIDATOR)
             .expressionLanguageSupported(ExpressionLanguageScope.ENVIRONMENT)
@@ -104,34 +108,77 @@ public interface KafkaClientComponent {
             )
             .build();
 
+    PropertyDescriptor AWS_ROLE_SOURCE = new PropertyDescriptor.Builder()
+            .name("AWS Role Source")
+            .description("Select how AWS credentials are sourced for AWS MSK IAM: Default Profile searches standard locations," +
+                    " Specified Profile selects a named profile, or Specified Role configures a Role ARN and Session Name.")
+            .required(true)
+            .allowableValues(AwsRoleSource.class)
+            .defaultValue(AwsRoleSource.DEFAULT_PROFILE)
+            .dependsOn(
+                    SASL_MECHANISM,
+                    SaslMechanism.AWS_MSK_IAM
+            )
+            .build();
+
     PropertyDescriptor AWS_PROFILE_NAME = new PropertyDescriptor.Builder()
             .name("aws.profile.name")
             .displayName("AWS Profile Name")
             .description("The Amazon Web Services Profile to select when multiple profiles are available.")
             .dependsOn(
-                    SASL_MECHANISM,
-                    SaslMechanism.AWS_MSK_IAM
+                    KafkaClientComponent.AWS_ROLE_SOURCE,
+                    AwsRoleSource.SPECIFIED_PROFILE
             )
-            .required(false)
+            .required(true)
             .addValidator(StandardValidators.NON_BLANK_VALIDATOR)
-            .expressionLanguageSupported(ExpressionLanguageScope.FLOWFILE_ATTRIBUTES)
+            .expressionLanguageSupported(ExpressionLanguageScope.NONE)
+            .build();
+
+    PropertyDescriptor AWS_ASSUME_ROLE_ARN = new PropertyDescriptor.Builder()
+            .name("AWS Assume Role ARN")
+            .description("The AWS Role ARN for cross-account access when using AWS MSK IAM. Used with Assume Role Session Name.")
+            .required(true)
+            .dependsOn(
+                    KafkaClientComponent.AWS_ROLE_SOURCE,
+                    AwsRoleSource.SPECIFIED_ROLE
+            )
+            .addValidator(StandardValidators.NON_BLANK_VALIDATOR)
+            .expressionLanguageSupported(ExpressionLanguageScope.NONE)
+            .build();
+
+    PropertyDescriptor AWS_ASSUME_ROLE_SESSION_NAME = new PropertyDescriptor.Builder()
+            .name("AWS Assume Role Session Name")
+            .description("The AWS Role Session Name for cross-account access. Used in conjunction with Assume Role ARN.")
+            .required(true)
+            .dependsOn(
+                    KafkaClientComponent.AWS_ROLE_SOURCE,
+                    AwsRoleSource.SPECIFIED_ROLE
+            )
+            .addValidator(StandardValidators.NON_BLANK_VALIDATOR)
+            .expressionLanguageSupported(ExpressionLanguageScope.NONE)
             .build();
 
     PropertyDescriptor SSL_CONTEXT_SERVICE = new PropertyDescriptor.Builder()
-            .name("ssl.context.service")
-            .displayName("SSL Context Service")
+            .name("SSL Context Service")
             .description("Service supporting SSL communication with Kafka brokers")
             .required(false)
             .identifiesControllerService(SSLContextService.class)
+            .dependsOn(
+                    SECURITY_PROTOCOL,
+                    SecurityProtocol.SSL.name(),
+                    SecurityProtocol.SASL_SSL.name())
             .build();
 
     PropertyDescriptor KERBEROS_SERVICE_NAME = new PropertyDescriptor.Builder()
             .name("sasl.kerberos.service.name")
             .displayName("Kerberos Service Name")
             .description("The service name that matches the primary name of the Kafka server configured in the broker JAAS configuration")
-            .required(false)
+            .required(true)
             .addValidator(StandardValidators.NON_BLANK_VALIDATOR)
             .expressionLanguageSupported(ExpressionLanguageScope.ENVIRONMENT)
+            .dependsOn(
+                    SASL_MECHANISM,
+                    SaslMechanism.GSSAPI)
             .build();
 
     PropertyDescriptor SELF_CONTAINED_KERBEROS_USER_SERVICE = new PropertyDescriptor.Builder()
@@ -139,6 +186,18 @@ public interface KafkaClientComponent {
             .displayName("Kerberos User Service")
             .description("Service supporting user authentication with Kerberos")
             .identifiesControllerService(SelfContainedKerberosUserService.class)
-            .required(false)
+            .required(true)
+            .dependsOn(
+                    SASL_MECHANISM,
+                    SaslMechanism.GSSAPI)
+            .build();
+
+    PropertyDescriptor OAUTH2_ACCESS_TOKEN_PROVIDER_SERVICE = new PropertyDescriptor.Builder()
+            .name("oauth2-access-token-provider-service")
+            .displayName("OAuth2 Access Token Provider Service")
+            .description("Service providing OAuth2 Access Tokens for authentication")
+            .identifiesControllerService(OAuth2AccessTokenProvider.class)
+            .required(true)
+            .dependsOn(SASL_MECHANISM, SaslMechanism.OAUTHBEARER)
             .build();
 }

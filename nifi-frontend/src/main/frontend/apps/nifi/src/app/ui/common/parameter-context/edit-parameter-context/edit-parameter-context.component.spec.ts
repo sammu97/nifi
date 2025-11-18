@@ -16,6 +16,7 @@
  */
 
 import { ComponentFixture, TestBed } from '@angular/core/testing';
+import { EventEmitter } from '@angular/core';
 
 import { EditParameterContext } from './edit-parameter-context.component';
 import { MAT_DIALOG_DATA, MatDialogRef } from '@angular/material/dialog';
@@ -23,10 +24,15 @@ import { of } from 'rxjs';
 import { NoopAnimationsModule } from '@angular/platform-browser/animations';
 import { provideMockStore } from '@ngrx/store/testing';
 import { initialState } from '../../../../pages/parameter-contexts/state/parameter-context-listing/parameter-context-listing.reducer';
+import { parameterContextListingFeatureKey } from '../../../../pages/parameter-contexts/state/parameter-context-listing';
+import { parameterContextsFeatureKey } from '../../../../pages/parameter-contexts/state';
+import { initialState as initialErrorState } from '../../../../state/error/error.reducer';
+import { errorFeatureKey } from '../../../../state/error';
+import { initialState as initialCurrentUserState } from '../../../../state/current-user/current-user.reducer';
+import { currentUserFeatureKey } from '../../../../state/current-user';
 import { ClusterConnectionService } from '../../../../service/cluster-connection.service';
-import { ParameterContextEntity } from '../../../../state/shared';
+import { ParameterContextEntity, ParameterEntity } from '../../../../state/shared';
 
-import 'codemirror/addon/hint/show-hint';
 import { EditParameterContextRequest } from '../index';
 
 describe('EditParameterContext', () => {
@@ -241,7 +247,15 @@ describe('EditParameterContext', () => {
             imports: [EditParameterContext, NoopAnimationsModule],
             providers: [
                 { provide: MAT_DIALOG_DATA, useValue: data },
-                provideMockStore({ initialState }),
+                provideMockStore({
+                    initialState: {
+                        [errorFeatureKey]: initialErrorState,
+                        [currentUserFeatureKey]: initialCurrentUserState,
+                        [parameterContextsFeatureKey]: {
+                            [parameterContextListingFeatureKey]: initialState
+                        }
+                    }
+                }),
                 {
                     provide: ClusterConnectionService,
                     useValue: {
@@ -259,5 +273,82 @@ describe('EditParameterContext', () => {
 
     it('should create', () => {
         expect(component).toBeTruthy();
+    });
+
+    it('should have cancelUpdateRequest EventEmitter', () => {
+        expect(component.cancelUpdateRequest).toBeDefined();
+        expect(component.cancelUpdateRequest).toBeInstanceOf(EventEmitter);
+    });
+
+    it('should emit cancelUpdateRequest when called', () => {
+        const spy = jest.spyOn(component.cancelUpdateRequest, 'emit');
+
+        component.cancelUpdateRequest.emit();
+
+        expect(spy).toHaveBeenCalledTimes(1);
+    });
+
+    describe('inheritsParameters', () => {
+        it('should return true if parameters are inherited', () => {
+            const parameters: ParameterEntity[] = [
+                {
+                    canWrite: true,
+                    parameter: {
+                        name: 'one',
+                        description: 'Description for one.',
+                        sensitive: false,
+                        value: 'value',
+                        provided: false,
+                        referencingComponents: [],
+                        parameterContext: {
+                            id: '95d4f3d2-018b-1000-b7c7-b830c49a8026',
+                            permissions: {
+                                canRead: true,
+                                canWrite: true
+                            },
+                            component: {
+                                id: '95d4f3d2-018b-1000-b7c7-b830c49a8026',
+                                name: 'params 1'
+                            }
+                        },
+                        inherited: true
+                    }
+                }
+            ];
+            expect(component.inheritsParameters(parameters)).toBe(true);
+        });
+
+        it('should return false if parameters are not inherited', () => {
+            const parameters: ParameterEntity[] = [
+                {
+                    canWrite: true,
+                    parameter: {
+                        name: 'one',
+                        description: 'Description for one.',
+                        sensitive: false,
+                        value: 'value',
+                        provided: false,
+                        referencingComponents: [],
+                        parameterContext: {
+                            id: '95d4f3d2-018b-1000-b7c7-b830c49a8026',
+                            permissions: {
+                                canRead: true,
+                                canWrite: true
+                            },
+                            component: {
+                                id: '95d4f3d2-018b-1000-b7c7-b830c49a8026',
+                                name: 'params 1'
+                            }
+                        },
+                        inherited: false
+                    }
+                }
+            ];
+            expect(component.inheritsParameters(parameters)).toBe(false);
+        });
+
+        it('should return false if parameters undefined', () => {
+            expect(component.inheritsParameters(undefined)).toBe(false);
+        });
     });
 });

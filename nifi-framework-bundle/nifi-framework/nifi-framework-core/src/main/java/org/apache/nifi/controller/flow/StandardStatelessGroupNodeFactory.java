@@ -28,6 +28,8 @@ import org.apache.nifi.controller.repository.FlowFileRepository;
 import org.apache.nifi.controller.repository.NonPurgeableContentRepository;
 import org.apache.nifi.controller.repository.StatelessBridgeFlowFileRepository;
 import org.apache.nifi.controller.repository.claim.ResourceClaimManager;
+import org.apache.nifi.controller.repository.metrics.tracking.StandardStatsTracker;
+import org.apache.nifi.controller.repository.metrics.tracking.StatsTracker;
 import org.apache.nifi.controller.scheduling.StatelessProcessScheduler;
 import org.apache.nifi.controller.scheduling.StatelessProcessSchedulerInitializationContext;
 import org.apache.nifi.engine.FlowEngine;
@@ -70,7 +72,6 @@ import org.apache.nifi.stateless.engine.StatelessFlowManager;
 import org.apache.nifi.stateless.engine.StatelessProcessContextFactory;
 import org.apache.nifi.stateless.repository.RepositoryContextFactory;
 import org.apache.nifi.stateless.repository.StatelessFlowFileRepository;
-import org.apache.nifi.stateless.repository.StatelessProvenanceRepository;
 import org.apache.nifi.stateless.repository.StatelessRepositoryContextFactory;
 
 import java.time.Duration;
@@ -119,7 +120,6 @@ public class StandardStatelessGroupNodeFactory implements StatelessGroupNodeFact
         final FlowFileRepository underlyingFlowFileRepository = flowController.getRepositoryContextFactory().getFlowFileRepository();
         final StatelessFlowFileRepository flowFileRepository = new StatelessBridgeFlowFileRepository(underlyingFlowFileRepository, resourceClaimManager);
 
-        final StatelessProvenanceRepository statelessProvenanceRepository = new StatelessProvenanceRepository(1_000);
         flowFileRepository.initialize(resourceClaimManager);
 
         final ContentRepository contentRepository = new NonPurgeableContentRepository(flowController.getRepositoryContextFactory().getContentRepository());
@@ -128,7 +128,6 @@ public class StandardStatelessGroupNodeFactory implements StatelessGroupNodeFact
             flowFileRepository,
             flowController.getFlowFileEventRepository(),
             flowController.getCounterRepository(),
-            statelessProvenanceRepository,
             flowController.getStateManagerProvider());
 
         final FlowMappingOptions flowMappingOptions = new FlowMappingOptions.Builder()
@@ -154,6 +153,9 @@ public class StandardStatelessGroupNodeFactory implements StatelessGroupNodeFact
             }
         };
 
+        final StatsTracker statsTracker = new StandardStatsTracker(flowController.getGarbageCollectionLog()::getTotalGarbageCollectionMillis,
+            flowController.getPerformanceTrackingPercentage());
+
         final LogRepository logRepository = LogRepositoryFactory.getRepository(group.getIdentifier());
         final StatelessGroupNode statelessGroupNode = new StandardStatelessGroupNode.Builder()
             .rootGroup(group)
@@ -168,6 +170,7 @@ public class StandardStatelessGroupNodeFactory implements StatelessGroupNodeFact
             .bulletinRepository(flowController.getBulletinRepository())
             .statelessGroupFactory(statelessGroupFactory)
             .lifecycleStateManager(flowController.getLifecycleStateManager())
+            .statsTracker(statsTracker)
             .boredYieldDuration(flowController.getBoredYieldDuration(TimeUnit.MILLISECONDS), TimeUnit.MILLISECONDS)
             .build();
 
@@ -226,7 +229,8 @@ public class StandardStatelessGroupNodeFactory implements StatelessGroupNodeFact
             }
         };
 
-        final StatelessProcessScheduler statelessScheduler = new StatelessProcessScheduler(flowController.getExtensionManager(), Duration.of(10, ChronoUnit.SECONDS));
+        final StatelessProcessScheduler statelessScheduler = new StatelessProcessScheduler(flowController.getExtensionManager(),
+            flowController.getLifecycleStateManager(), Duration.of(10, ChronoUnit.SECONDS));
 
         final StatelessStateManagerProvider stateManagerProvider = new StatelessStateManagerProvider();
         final StatelessEngine statelessEngine = new StandardStatelessEngine.Builder()
@@ -242,6 +246,7 @@ public class StandardStatelessGroupNodeFactory implements StatelessGroupNodeFact
             .stateManagerProvider(stateManagerProvider)
             .kerberosConfiguration(kerberosConfig)
             .statusTaskInterval(null)
+            .lifecycleStateManager(flowController.getLifecycleStateManager())
             .build();
 
         final BulletinRepository bulletinRepository = flowController.getBulletinRepository();
@@ -288,7 +293,6 @@ public class StandardStatelessGroupNodeFactory implements StatelessGroupNodeFact
             .topLevelGroupId(group.getIdentifier())
             .updateDescendantVersionedFlows(true)
             .updateGroupSettings(true)
-            .updateGroupVersionControlSnapshot(false)
             .updateRpgUrls(true)
             .ignoreLocalModifications(true)
             .build();

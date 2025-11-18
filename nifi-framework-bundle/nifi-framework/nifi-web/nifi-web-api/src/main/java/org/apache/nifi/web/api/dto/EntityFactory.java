@@ -238,6 +238,7 @@ public final class EntityFactory {
             entity.setStatus(status);
             entity.setId(dto.getId());
             entity.setInputRequirement(dto.getInputRequirement());
+            entity.setPhysicalState(dto.getPhysicalState());
             entity.setPosition(dto.getPosition());
             if (permissions != null && permissions.getCanRead()) {
                 entity.setComponent(dto);
@@ -793,6 +794,7 @@ public final class EntityFactory {
             entity.setSourceId(dto.getSourceId());
             entity.setGroupId(dto.getGroupId());
             entity.setTimestamp(dto.getTimestamp());
+            entity.setTimestampIso(dto.getTimestampIso());
             entity.setNodeAddress(dto.getNodeAddress());
             entity.setCanRead(canRead);
             if (canRead) {

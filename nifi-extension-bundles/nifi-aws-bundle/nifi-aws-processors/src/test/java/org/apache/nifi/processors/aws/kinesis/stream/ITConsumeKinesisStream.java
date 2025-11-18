@@ -16,7 +16,6 @@
  */
 package org.apache.nifi.processors.aws.kinesis.stream;
 
-import com.amazonaws.regions.Regions;
 import org.apache.nifi.processors.aws.kinesis.stream.record.AbstractKinesisRecordProcessor;
 import org.apache.nifi.util.MockFlowFile;
 import org.apache.nifi.util.TestRunner;
@@ -38,13 +37,10 @@ import java.util.List;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
 
-import static com.amazonaws.SDKGlobalConfiguration.AWS_CBOR_DISABLE_SYSTEM_PROPERTY;
-
 public abstract class ITConsumeKinesisStream {
 
     static final String KINESIS_STREAM_NAME = "test-stream";
     static final String APPLICATION_NAME = "test-application";
-    static final String REGION = System.getProperty("AWS_DEFAULT_REGION", Regions.US_EAST_1.getName());
 
     protected TestRunner runner;
 
@@ -128,8 +124,6 @@ public abstract class ITConsumeKinesisStream {
         runner = null;
 
         Thread.sleep(2_000);
-
-        System.clearProperty(AWS_CBOR_DISABLE_SYSTEM_PROPERTY);
     }
 
     private void cleanupDynamoDB() {

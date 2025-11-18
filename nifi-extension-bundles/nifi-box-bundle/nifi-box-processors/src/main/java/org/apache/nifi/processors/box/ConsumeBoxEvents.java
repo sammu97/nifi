@@ -38,7 +38,6 @@ import org.apache.nifi.components.state.Scope;
 import org.apache.nifi.flowfile.FlowFile;
 import org.apache.nifi.flowfile.attributes.CoreAttributes;
 import org.apache.nifi.logging.ComponentLog;
-import org.apache.nifi.processor.AbstractProcessor;
 import org.apache.nifi.processor.ProcessContext;
 import org.apache.nifi.processor.ProcessSession;
 import org.apache.nifi.processor.Relationship;
@@ -52,6 +51,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -70,7 +70,7 @@ import java.util.concurrent.atomic.AtomicLong;
         The last known position of the Box stream is stored in the processor state and is used to
         resume the stream from the last known position when the processor is restarted.
         """, scopes = { Scope.CLUSTER })
-public class ConsumeBoxEvents extends AbstractProcessor implements VerifiableProcessor {
+public class ConsumeBoxEvents extends AbstractBoxProcessor implements VerifiableProcessor {
 
     private final static String POSITION_KEY = "position";
 
@@ -87,7 +87,7 @@ public class ConsumeBoxEvents extends AbstractProcessor implements VerifiablePro
             .build();
 
     private static final List<PropertyDescriptor> PROPERTY_DESCRIPTORS = List.of(
-            BoxClientService.BOX_CLIENT_SERVICE,
+            BOX_CLIENT_SERVICE,
             QUEUE_CAPACITY
     );
 
@@ -100,7 +100,7 @@ public class ConsumeBoxEvents extends AbstractProcessor implements VerifiablePro
 
     private volatile BoxAPIConnection boxAPIConnection;
     private volatile EventStream eventStream;
-    protected volatile LinkedBlockingQueue<BoxEvent> events;
+    protected volatile BlockingQueue<BoxEvent> events;
     private volatile AtomicLong position = new AtomicLong(0);
 
     @Override
@@ -115,7 +115,7 @@ public class ConsumeBoxEvents extends AbstractProcessor implements VerifiablePro
 
     @OnScheduled
     public void onScheduled(final ProcessContext context) {
-        final BoxClientService boxClientService = context.getProperty(BoxClientService.BOX_CLIENT_SERVICE).asControllerService(BoxClientService.class);
+        final BoxClientService boxClientService = context.getProperty(BOX_CLIENT_SERVICE).asControllerService(BoxClientService.class);
         boxAPIConnection = boxClientService.getBoxApiConnection();
 
         try {
@@ -135,7 +135,7 @@ public class ConsumeBoxEvents extends AbstractProcessor implements VerifiablePro
             events = new LinkedBlockingQueue<>(queueCapacity);
         } else {
             // create new one with events from the old queue in case capacity has changed
-            final LinkedBlockingQueue<BoxEvent> newQueue = new LinkedBlockingQueue<>(queueCapacity);
+            final BlockingQueue<BoxEvent> newQueue = new LinkedBlockingQueue<>(queueCapacity);
             newQueue.addAll(events);
             events = newQueue;
         }
@@ -183,7 +183,7 @@ public class ConsumeBoxEvents extends AbstractProcessor implements VerifiablePro
     public List<ConfigVerificationResult> verify(ProcessContext context, ComponentLog verificationLogger, Map<String, String> attributes) {
 
         final List<ConfigVerificationResult> results = new ArrayList<>();
-        BoxClientService boxClientService = context.getProperty(BoxClientService.BOX_CLIENT_SERVICE).asControllerService(BoxClientService.class);
+        BoxClientService boxClientService = context.getProperty(BOX_CLIENT_SERVICE).asControllerService(BoxClientService.class);
         boxAPIConnection = boxClientService.getBoxApiConnection();
 
         try {

@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-import { Component, forwardRef, Input } from '@angular/core';
+import { Component, forwardRef, Input, inject } from '@angular/core';
 import { ControlValueAccessor, NG_VALUE_ACCESSOR } from '@angular/forms';
 import { MatButtonModule } from '@angular/material/button';
 import { MatDialogModule } from '@angular/material/dialog';
@@ -62,6 +62,9 @@ import {
     styleUrls: ['./parameter-context-inheritance.component.scss']
 })
 export class ParameterContextInheritance implements ControlValueAccessor {
+    private nifiCommon = inject(NiFiCommon);
+    private sortObjectByPropertyPipe = inject(SortObjectByPropertyPipe);
+
     @Input() set allParameterContexts(allParameterContexts: ParameterContextEntity[]) {
         this._allParameterContexts = [...allParameterContexts];
         this.processParameterContexts();
@@ -81,14 +84,10 @@ export class ParameterContextInheritance implements ControlValueAccessor {
 
     inheritedParameterContexts!: ParameterContextReferenceEntity[];
 
-    constructor(
-        private nifiCommon: NiFiCommon,
-        private sortObjectByPropertyPipe: SortObjectByPropertyPipe
-    ) {}
-
     private processParameterContexts(): void {
         this.availableParameterContexts = [];
         this.selectedParameterContexts = [];
+        const unsortedSelectedParameterContexts: ParameterContextEntity[] = [];
 
         if (this._allParameterContexts && this.inheritedParameterContexts) {
             this._allParameterContexts.forEach((parameterContext) => {
@@ -96,13 +95,24 @@ export class ParameterContextInheritance implements ControlValueAccessor {
                     (inheritedParameterContext) => parameterContext.id == inheritedParameterContext.id
                 );
                 if (isInherited) {
-                    this.selectedParameterContexts.push(parameterContext);
+                    unsortedSelectedParameterContexts.push(parameterContext);
                 } else {
                     this.availableParameterContexts.push(parameterContext);
                 }
             });
 
             this.sortObjectByPropertyPipe.transform(this.availableParameterContexts, 'component.name');
+            if (this.inheritedParameterContexts.length > 0 && unsortedSelectedParameterContexts.length > 0) {
+                // put the inherited parameter contexts in the proper order
+                this.inheritedParameterContexts.forEach((pc) => {
+                    const selectedParameterContext = unsortedSelectedParameterContexts.find(
+                        (selected) => selected.id == pc.id
+                    );
+                    if (selectedParameterContext) {
+                        this.selectedParameterContexts.push(selectedParameterContext);
+                    }
+                });
+            }
         }
     }
 

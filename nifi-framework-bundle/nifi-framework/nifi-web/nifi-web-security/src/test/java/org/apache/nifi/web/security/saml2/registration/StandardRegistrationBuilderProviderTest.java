@@ -16,10 +16,9 @@
  */
 package org.apache.nifi.web.security.saml2.registration;
 
+import mockwebserver3.MockResponse;
+import mockwebserver3.MockWebServer;
 import okhttp3.HttpUrl;
-import okhttp3.mockwebserver.MockResponse;
-import okhttp3.mockwebserver.MockWebServer;
-import org.apache.commons.io.IOUtils;
 import org.apache.nifi.security.cert.builder.StandardCertificateBuilder;
 import org.apache.nifi.security.ssl.EphemeralKeyStoreBuilder;
 import org.apache.nifi.security.ssl.StandardKeyManagerBuilder;
@@ -38,6 +37,7 @@ import javax.net.ssl.SSLSocketFactory;
 import javax.net.ssl.X509KeyManager;
 import javax.net.ssl.X509TrustManager;
 import javax.security.auth.x500.X500Principal;
+
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URL;
@@ -63,8 +63,6 @@ class StandardRegistrationBuilderProviderTest {
 
     private static final int HTTP_NOT_FOUND = 404;
 
-    private static final boolean PROXY_DISABLED = false;
-
     private MockWebServer mockWebServer;
 
     @BeforeEach
@@ -74,8 +72,8 @@ class StandardRegistrationBuilderProviderTest {
     }
 
     @AfterEach
-    void shutdownServer() throws IOException {
-        mockWebServer.shutdown();
+    void shutdownServer() {
+        mockWebServer.close();
     }
 
     @Test
@@ -88,7 +86,9 @@ class StandardRegistrationBuilderProviderTest {
     @Test
     void testGetRegistrationBuilderHttpUrl() throws IOException {
         final String metadata = getMetadata();
-        final MockResponse response = new MockResponse().setBody(metadata);
+        final MockResponse response = new MockResponse.Builder()
+                .body(metadata)
+                .build();
         mockWebServer.enqueue(response);
         final String metadataUrl = getMetadataUrl();
 
@@ -99,7 +99,9 @@ class StandardRegistrationBuilderProviderTest {
 
     @Test
     void testGetRegistrationBuilderHttpUrlNotFound() {
-        final MockResponse response = new MockResponse().setResponseCode(HTTP_NOT_FOUND);
+        final MockResponse response = new MockResponse.Builder()
+                .code(HTTP_NOT_FOUND)
+                .build();
         mockWebServer.enqueue(response);
         final String metadataUrl = getMetadataUrl();
 
@@ -128,10 +130,12 @@ class StandardRegistrationBuilderProviderTest {
                 .build();
 
         final SSLSocketFactory sslSocketFactory = Objects.requireNonNull(sslContext.getSocketFactory());
-        mockWebServer.useHttps(sslSocketFactory, PROXY_DISABLED);
+        mockWebServer.useHttps(sslSocketFactory);
 
         final String metadata = getMetadata();
-        final MockResponse response = new MockResponse().setBody(metadata);
+        final MockResponse response = new MockResponse.Builder()
+                .body(metadata)
+                .build();
         mockWebServer.enqueue(response);
         final String metadataUrl = getMetadataUrl();
 
@@ -177,7 +181,8 @@ class StandardRegistrationBuilderProviderTest {
 
     final String getMetadata() throws IOException {
         try (final InputStream inputStream = Objects.requireNonNull(getClass().getResourceAsStream(METADATA_PATH))) {
-            return IOUtils.toString(inputStream, StandardCharsets.UTF_8);
+            final byte[] bytes = inputStream.readAllBytes();
+            return new String(bytes, StandardCharsets.UTF_8);
         }
     }
 

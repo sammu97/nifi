@@ -16,7 +16,7 @@
  */
 package org.apache.nifi.web.controller;
 
-import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.Strings;
 import org.apache.nifi.authorization.Authorizer;
 import org.apache.nifi.authorization.RequestAction;
 import org.apache.nifi.authorization.resource.Authorizable;
@@ -123,7 +123,7 @@ public class ControllerSearchService {
         final List<ProcessGroup> lineage = getLineage(scope);
 
         for (final ProcessGroup group : lineage) {
-            if (StringUtils.containsIgnoreCase(group.getName(), filterValue) || StringUtils.containsIgnoreCase(group.getIdentifier(), filterValue)) {
+            if (Strings.CI.contains(group.getName(), filterValue) || Strings.CI.contains(group.getIdentifier(), filterValue)) {
                 return true;
             }
         }
@@ -132,7 +132,7 @@ public class ControllerSearchService {
     }
 
     private List<ProcessGroup> getLineage(final ProcessGroup group) {
-        final LinkedList<ProcessGroup> result = new LinkedList<>();
+        final List<ProcessGroup> result = new LinkedList<>();
         ProcessGroup current = group;
 
         while (current != null) {

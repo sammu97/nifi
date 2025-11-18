@@ -45,6 +45,7 @@ import org.apache.nifi.flowfile.attributes.CoreAttributes;
 import org.apache.nifi.flowfile.attributes.FragmentAttributes;
 import org.apache.nifi.flowfile.attributes.StandardFlowFileMediaType;
 import org.apache.nifi.logging.ComponentLog;
+import org.apache.nifi.migration.PropertyConfiguration;
 import org.apache.nifi.processor.AbstractProcessor;
 import org.apache.nifi.processor.ProcessContext;
 import org.apache.nifi.processor.ProcessSession;
@@ -159,7 +160,6 @@ public class UnpackContent extends AbstractProcessor {
             .build();
     public static final PropertyDescriptor ZIP_FILENAME_CHARSET = new PropertyDescriptor.Builder()
             .name("Filename Character Set")
-            .displayName("Filename Character Set")
             .description(
                 "If supplied this character set will be supplied to the Zip utility to attempt to decode filenames using the specific character set. "
                     + "If not specified the default platform character set will be used. This is useful if a Zip was created with a different character "
@@ -180,7 +180,6 @@ public class UnpackContent extends AbstractProcessor {
 
     public static final PropertyDescriptor PASSWORD = new PropertyDescriptor.Builder()
             .name("Password")
-            .displayName("Password")
             .description("Password used for decrypting Zip archives encrypted with ZipCrypto or AES. Configuring a password disables support for alternative Zip compression algorithms.")
             .required(false)
             .sensitive(true)
@@ -189,8 +188,7 @@ public class UnpackContent extends AbstractProcessor {
             .build();
 
     public static final PropertyDescriptor ALLOW_STORED_ENTRIES_WITH_DATA_DESCRIPTOR = new PropertyDescriptor.Builder()
-            .name("allow-stored-entries-wdd")
-            .displayName("Allow Stored Entries With Data Descriptor")
+            .name("Allow Stored Entries With Data Descriptor")
             .description("Some zip archives contain stored entries with data descriptors which by spec should not " +
                     "happen.  If this property is true they will be read anyway.  If false and such an entry is discovered " +
                     "the zip will fail to process.")
@@ -257,7 +255,7 @@ public class UnpackContent extends AbstractProcessor {
             fileFilter = Pattern.compile(context.getProperty(FILE_FILTER).getValue());
 
             tarUnpacker = switch (packageFormat) {
-                case AUTO_DETECT_FORMAT, TAR_FORMAT, X_TAR_FORMAT -> new TarUnpacker(fileFilter);
+                case AUTO_DETECT_FORMAT, TAR_FORMAT -> new TarUnpacker(fileFilter);
                 default -> null;
             };
 
@@ -303,16 +301,20 @@ public class UnpackContent extends AbstractProcessor {
                 }
             }
             if (packagingFormat == null) {
-                logger.info("Cannot unpack {} because its mime.type attribute is set to '{}', which is not a format that can be unpacked; routing to 'success'", flowFile, mimeType);
-                session.transfer(flowFile, REL_SUCCESS);
-                return;
+                if (mimeType.toLowerCase().contains(TAR_FORMAT_NAME)) {
+                    packagingFormat = PackageFormat.TAR_FORMAT;
+                } else {
+                    logger.info("Cannot unpack {} because its mime.type attribute is set to '{}', which is not a format that can be unpacked; routing to 'success'", flowFile, mimeType);
+                    session.transfer(flowFile, REL_SUCCESS);
+                    return;
+                }
             }
         }
 
         // set the Unpacker to use for this FlowFile.  FlowFileUnpackager objects maintain state and are not reusable.
         final Unpacker unpacker;
         final boolean addFragmentAttrs = switch (packagingFormat) {
-          case TAR_FORMAT, X_TAR_FORMAT -> {
+          case TAR_FORMAT -> {
             unpacker = tarUnpacker;
             yield true;
           }
@@ -360,6 +362,11 @@ public class UnpackContent extends AbstractProcessor {
             session.transfer(flowFile, REL_FAILURE);
             session.remove(unpacked);
         }
+    }
+
+    @Override
+    public void migrateProperties(PropertyConfiguration config) {
+        config.renameProperty("allow-stored-entries-wdd", ALLOW_STORED_ENTRIES_WITH_DATA_DESCRIPTOR.getName());
     }
 
     private static abstract class Unpacker {
@@ -703,7 +710,7 @@ public class UnpackContent extends AbstractProcessor {
         }
 
         // second pass adds fragment attributes
-        ArrayList<FlowFile> newList = new ArrayList<>(unpacked);
+        List<FlowFile> newList = new ArrayList<>(unpacked);
         unpacked.clear();
         for (FlowFile ff : newList) {
             FlowFile newFF = session.putAllAttributes(ff, Map.of(
@@ -716,8 +723,7 @@ public class UnpackContent extends AbstractProcessor {
 
     protected enum PackageFormat implements DescribedValue {
         AUTO_DETECT_FORMAT(AUTO_DETECT_FORMAT_NAME, null, null),
-        TAR_FORMAT(TAR_FORMAT_NAME, null, "application/tar"),
-        X_TAR_FORMAT(TAR_FORMAT_NAME, null, "application/x-tar"),
+        TAR_FORMAT(TAR_FORMAT_NAME, null, "application/x-tar"),
         ZIP_FORMAT(ZIP_FORMAT_NAME, null, "application/zip"),
         FLOWFILE_STREAM_FORMAT_V3(FLOWFILE_STREAM_FORMAT_V3_NAME, null, StandardFlowFileMediaType.VERSION_3.getMediaType()),
         FLOWFILE_STREAM_FORMAT_V2(FLOWFILE_STREAM_FORMAT_V2_NAME, null, StandardFlowFileMediaType.VERSION_2.getMediaType()),

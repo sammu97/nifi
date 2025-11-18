@@ -40,8 +40,10 @@ import org.apache.nifi.components.ValidationResult;
 import org.apache.nifi.components.state.Scope;
 import org.apache.nifi.context.PropertyContext;
 import org.apache.nifi.expression.ExpressionLanguageScope;
+import org.apache.nifi.migration.PropertyConfiguration;
 import org.apache.nifi.processor.ProcessContext;
 import org.apache.nifi.processor.util.StandardValidators;
+import org.apache.nifi.processor.util.list.ListedEntityTracker;
 import org.apache.nifi.processors.azure.storage.utils.ADLSFileInfo;
 import org.apache.nifi.processors.azure.storage.utils.AzureStorageUtils;
 import org.apache.nifi.processors.azure.storage.utils.DataLakeServiceClientFactory;
@@ -82,6 +84,7 @@ import static org.apache.nifi.processors.azure.storage.utils.AzureStorageUtils.D
 import static org.apache.nifi.processors.azure.storage.utils.AzureStorageUtils.FILESYSTEM;
 import static org.apache.nifi.processors.azure.storage.utils.AzureStorageUtils.evaluateDirectoryProperty;
 import static org.apache.nifi.processors.azure.storage.utils.AzureStorageUtils.evaluateFileSystemProperty;
+import static org.apache.nifi.processors.azure.storage.utils.AzureStorageUtils.getProxyOptions;
 
 @PrimaryNodeOnly
 @TriggerSerially
@@ -106,8 +109,7 @@ import static org.apache.nifi.processors.azure.storage.utils.AzureStorageUtils.e
 public class ListAzureDataLakeStorage extends AbstractListAzureProcessor<ADLSFileInfo> {
 
     public static final PropertyDescriptor RECURSE_SUBDIRECTORIES = new PropertyDescriptor.Builder()
-            .name("recurse-subdirectories")
-            .displayName("Recurse Subdirectories")
+            .name("Recurse Subdirectories")
             .description("Indicates whether to list files from subdirectories of the directory")
             .required(true)
             .allowableValues("true", "false")
@@ -115,8 +117,7 @@ public class ListAzureDataLakeStorage extends AbstractListAzureProcessor<ADLSFil
             .build();
 
     public static final PropertyDescriptor FILE_FILTER = new PropertyDescriptor.Builder()
-            .name("file-filter")
-            .displayName("File Filter")
+            .name("File Filter")
             .description("Only files whose names match the given regular expression will be listed")
             .required(false)
             .addValidator(StandardValidators.REGULAR_EXPRESSION_WITH_EL_VALIDATOR)
@@ -124,8 +125,7 @@ public class ListAzureDataLakeStorage extends AbstractListAzureProcessor<ADLSFil
             .build();
 
     public static final PropertyDescriptor PATH_FILTER = new PropertyDescriptor.Builder()
-            .name("path-filter")
-            .displayName("Path Filter")
+            .name("Path Filter")
             .description(String.format("When '%s' is true, then only subdirectories whose paths match the given regular expression will be scanned", RECURSE_SUBDIRECTORIES.getDisplayName()))
             .required(false)
             .addValidator(StandardValidators.REGULAR_EXPRESSION_WITH_EL_VALIDATOR)
@@ -133,8 +133,7 @@ public class ListAzureDataLakeStorage extends AbstractListAzureProcessor<ADLSFil
             .build();
 
     public static final PropertyDescriptor INCLUDE_TEMPORARY_FILES = new PropertyDescriptor.Builder()
-            .name("include-temporary-files")
-            .displayName("Include Temporary Files")
+            .name("Include Temporary Files")
             .description("Whether to include temporary files when listing the contents of configured directory paths.")
             .required(true)
             .allowableValues(Boolean.TRUE.toString(), Boolean.FALSE.toString())
@@ -193,6 +192,21 @@ public class ListAzureDataLakeStorage extends AbstractListAzureProcessor<ADLSFil
         filePattern = null;
         pathPattern = null;
         clientFactory = null;
+    }
+
+    @Override
+    public void migrateProperties(PropertyConfiguration config) {
+        super.migrateProperties(config);
+        config.renameProperty(AzureStorageUtils.OLD_ADLS_CREDENTIALS_SERVICE_DESCRIPTOR_NAME, AzureStorageUtils.ADLS_CREDENTIALS_SERVICE.getName());
+        config.renameProperty(AzureStorageUtils.OLD_FILESYSTEM_DESCRIPTOR_NAME, AzureStorageUtils.FILESYSTEM.getName());
+        config.renameProperty(AzureStorageUtils.OLD_DIRECTORY_DESCRIPTOR_NAME, DIRECTORY.getName());
+        config.renameProperty("recurse-subdirectories", RECURSE_SUBDIRECTORIES.getName());
+        config.renameProperty("file-filter", FILE_FILTER.getName());
+        config.renameProperty("path-filter", PATH_FILTER.getName());
+        config.renameProperty("include-temporary-files", INCLUDE_TEMPORARY_FILES.getName());
+        config.renameProperty(ListedEntityTracker.OLD_TRACKING_STATE_CACHE_PROPERTY_NAME, TRACKING_STATE_CACHE.getName());
+        config.renameProperty(ListedEntityTracker.OLD_TRACKING_TIME_WINDOW_PROPERTY_NAME, TRACKING_TIME_WINDOW.getName());
+        config.renameProperty(ListedEntityTracker.OLD_INITIAL_LISTING_TARGET_PROPERTY_NAME, INITIAL_LISTING_TARGET.getName());
     }
 
     @Override
@@ -264,6 +278,13 @@ public class ListAzureDataLakeStorage extends AbstractListAzureProcessor<ADLSFil
 
     private List<ADLSFileInfo> performListing(final ProcessContext context, final Long minTimestamp, final ListingMode listingMode,
                                               final boolean applyFilters) throws IOException {
+        final DataLakeServiceClientFactory currentClientFactory;
+        if (ListingMode.CONFIGURATION_VERIFICATION == listingMode) {
+            currentClientFactory = new DataLakeServiceClientFactory(getLogger(), getProxyOptions(context));
+        } else {
+            currentClientFactory = clientFactory;
+        }
+
         try {
             final String fileSystem = evaluateFileSystemProperty(FILESYSTEM, context);
             final String baseDirectory = evaluateDirectoryProperty(DIRECTORY, context);
@@ -276,7 +297,7 @@ public class ListAzureDataLakeStorage extends AbstractListAzureProcessor<ADLSFil
 
             final ADLSCredentialsDetails credentialsDetails = credentialsService.getCredentialsDetails(Collections.emptyMap());
 
-            final DataLakeServiceClient storageClient = clientFactory.getStorageClient(credentialsDetails);
+            final DataLakeServiceClient storageClient = currentClientFactory.getStorageClient(credentialsDetails);
             final DataLakeFileSystemClient fileSystemClient = storageClient.getFileSystemClient(fileSystem);
 
             final ListPathsOptions options = new ListPathsOptions();
@@ -300,7 +321,7 @@ public class ListAzureDataLakeStorage extends AbstractListAzureProcessor<ADLSFil
                             .build())
                     .filter(fileInfo -> applyFilters)
                     .filter(fileInfo -> filePattern == null || filePattern.matcher(fileInfo.getFilename()).matches())
-                    .filter(fileInfo -> pathPattern == null || pathPattern.matcher(RegExUtils.removeFirst(fileInfo.getDirectory(), baseDirectoryPattern)).matches())
+                    .filter(fileInfo -> pathPattern == null || pathPattern.matcher(RegExUtils.removeFirst((CharSequence) fileInfo.getDirectory(), baseDirectoryPattern)).matches())
                     .toList();
         } catch (final Exception e) {
             getLogger().error("Failed to list directory on Azure Data Lake Storage", e);

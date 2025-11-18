@@ -52,6 +52,7 @@ import org.apache.nifi.controller.service.StandardControllerServiceProvider;
 import org.apache.nifi.controller.service.mock.MockProcessGroup;
 import org.apache.nifi.engine.FlowEngine;
 import org.apache.nifi.groups.ProcessGroup;
+import org.apache.nifi.lifecycle.ProcessorStopLifecycleMethods;
 import org.apache.nifi.logging.ComponentLog;
 import org.apache.nifi.nar.ExtensionDiscoveringManager;
 import org.apache.nifi.nar.StandardExtensionDiscoveringManager;
@@ -272,7 +273,7 @@ public class TestStandardProcessScheduler {
 
         Thread.sleep(25L);
 
-        scheduler.stopProcessor(procNode);
+        scheduler.stopProcessor(procNode, ProcessorStopLifecycleMethods.TRIGGER_ALL);
         assertTrue(service.isActive());
         assertSame(ControllerServiceState.ENABLING, service.getState());
         scheduler.disableControllerService(service).get();
@@ -338,22 +339,20 @@ public class TestStandardProcessScheduler {
 
         assertFalse(serviceNode.isActive());
         final SimpleTestService ts = (SimpleTestService) serviceNode.getControllerServiceImplementation();
-        final ExecutorService executor = Executors.newCachedThreadPool();
-
         final AtomicBoolean asyncFailed = new AtomicBoolean();
-        for (int i = 0; i < 1000; i++) {
-            executor.execute(() -> {
-                try {
-                    scheduler.enableControllerService(serviceNode).get();
-                    assertTrue(serviceNode.isActive());
-                } catch (final Exception e) {
-                    asyncFailed.set(true);
-                }
-            });
-        }
 
-        executor.shutdown();
-        executor.awaitTermination(10, TimeUnit.SECONDS);
+        try (final ExecutorService executor = Executors.newCachedThreadPool()) {
+            for (int i = 0; i < 1000; i++) {
+                executor.execute(() -> {
+                    try {
+                        scheduler.enableControllerService(serviceNode).get();
+                        assertTrue(serviceNode.isActive());
+                    } catch (final Exception e) {
+                        asyncFailed.set(true);
+                    }
+                });
+            }
+        }
 
         assertFalse(asyncFailed.get());
         assertEquals(1, ts.enableInvocationCount());
@@ -643,12 +642,12 @@ public class TestStandardProcessScheduler {
         private final AtomicInteger disableCounter = new AtomicInteger();
 
         @OnEnabled
-        public void enable(final ConfigurationContext context) {
+        public void enable() {
             this.enableCounter.incrementAndGet();
         }
 
         @OnDisabled
-        public void disable(final ConfigurationContext context) {
+        public void disable() {
             this.disableCounter.incrementAndGet();
         }
 

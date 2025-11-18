@@ -41,6 +41,7 @@ import okio.Okio;
 import okio.Source;
 import org.apache.commons.io.input.TeeInputStream;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.Strings;
 import org.apache.nifi.annotation.behavior.DynamicProperties;
 import org.apache.nifi.annotation.behavior.DynamicProperty;
 import org.apache.nifi.annotation.behavior.InputRequirement;
@@ -85,7 +86,7 @@ import org.apache.nifi.proxy.ProxySpec;
 import org.apache.nifi.ssl.SSLContextProvider;
 import org.apache.nifi.stream.io.StreamUtils;
 
-import javax.annotation.Nullable;
+import jakarta.annotation.Nullable;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLSocketFactory;
 import javax.net.ssl.X509TrustManager;
@@ -174,6 +175,8 @@ public class InvokeHTTP extends AbstractProcessor {
     private static final Pattern FORM_DATA_NAME_PARAMETER_PATTERN = Pattern.compile("post:form:(?<formDataName>.*)$");
     private static final String FORM_DATA_NAME_GROUP = "formDataName";
 
+    private static final List<HttpMethod> HTTP_METHOD_VALUES = List.of(HttpMethod.values());
+
     private static final Set<String> IGNORED_REQUEST_ATTRIBUTES = Set.of(
             STATUS_CODE,
             STATUS_MESSAGE,
@@ -184,7 +187,6 @@ public class InvokeHTTP extends AbstractProcessor {
             REMOTE_DN,
             EXCEPTION_CLASS,
             EXCEPTION_MESSAGE,
-            CoreAttributes.UUID.key(),
             CoreAttributes.PATH.key()
     );
 
@@ -446,7 +448,7 @@ public class InvokeHTTP extends AbstractProcessor {
 
     public static final PropertyDescriptor RESPONSE_GENERATION_REQUIRED = new PropertyDescriptor.Builder()
             .name("Response Generation Required")
-            .description("Enable generation and transfer of a FlowFile to the Response relationship regardless of HTTP response received.")
+            .description("Enable generation and transfer of a FlowFile to the Response relationship regardless of HTTP response status code received.")
             .required(false)
             .defaultValue(Boolean.FALSE.toString())
             .allowableValues(Boolean.TRUE.toString(), Boolean.FALSE.toString())
@@ -541,7 +543,12 @@ public class InvokeHTTP extends AbstractProcessor {
 
     public static final Relationship RESPONSE = new Relationship.Builder()
             .name("Response")
-            .description("Response FlowFiles transferred when receiving HTTP responses with a status code between 200 and 299.")
+            .description("""
+            Response FlowFiles transferred when receiving HTTP responses with a status code between 200 and 299.
+            Enabling [Response Generation Required] changes routing behavior, sending unsuccessful responses to their corresponding relationships
+            and also sending FlowFiles to the Response relationship as well, regardless of status code received.
+            """
+            )
             .build();
 
     public static final Relationship RETRY = new Relationship.Builder()
@@ -1254,7 +1261,7 @@ public class InvokeHTTP extends AbstractProcessor {
     }
 
     /**
-     * Returns a Map of flowfile attributes from the response http headers. Multivalue headers are naively converted to comma separated strings.
+     * Returns a Map of FlowFile attributes from the response http headers. Multivalue headers are naively converted to comma separated strings.
      * Prefix is passed in to allow differentiation for these new attributes.
      */
     private Map<String, String> convertAttributesFromHeaders(final Response responseHttp, final String prefix) {
@@ -1262,15 +1269,21 @@ public class InvokeHTTP extends AbstractProcessor {
         final Map<String, String> attributes = new HashMap<>();
         final String trimmedPrefix = trimToEmpty(prefix);
         final Headers headers = responseHttp.headers();
-        headers.names().forEach((key) -> {
-            final List<String> values = headers.values(key);
-            // we ignore any headers with no actual values (rare)
-            if (!values.isEmpty()) {
-                // create a comma separated string from the values, this is stored in the map
-                final String value = StringUtils.join(values, MULTIPLE_HEADER_DELIMITER);
-                attributes.put(trimmedPrefix + key, value);
+        for (final String headerName : headers.names()) {
+            // Ignore blank response header names
+            if (headerName.isBlank()) {
+                continue;
             }
-        });
+            final List<String> values = headers.values(headerName);
+            // Ignore empty response header values
+            if (values.isEmpty()) {
+                continue;
+            }
+
+            final String attributeName = trimmedPrefix + headerName;
+            final String delimitedValues = StringUtils.join(values, MULTIPLE_HEADER_DELIMITER);
+            attributes.put(attributeName, delimitedValues);
+        }
 
         final Handshake handshake = responseHttp.handshake();
         if (handshake != null) {
@@ -1298,7 +1311,7 @@ public class InvokeHTTP extends AbstractProcessor {
 
     private String getFileNameFromUrl(URL url) {
         String fileName = null;
-        String path = StringUtils.removeEnd(url.getPath(), "/");
+        String path = Strings.CS.removeEnd(url.getPath(), "/");
 
         if (!StringUtils.isEmpty(path)) {
             fileName = path.substring(path.lastIndexOf('/') + 1);
@@ -1308,7 +1321,7 @@ public class InvokeHTTP extends AbstractProcessor {
     }
 
     private Optional<HttpMethod> findRequestMethod(String method) {
-        return Arrays.stream(HttpMethod.values())
+        return HTTP_METHOD_VALUES.stream()
                 .filter(httpMethod -> httpMethod.name().equals(method))
                 .findFirst();
     }

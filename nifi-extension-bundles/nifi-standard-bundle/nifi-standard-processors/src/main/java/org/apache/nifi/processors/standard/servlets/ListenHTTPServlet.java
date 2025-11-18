@@ -29,6 +29,7 @@ import jakarta.ws.rs.Path;
 import jakarta.ws.rs.core.MediaType;
 import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.Strings;
 import org.apache.nifi.flowfile.FlowFile;
 import org.apache.nifi.flowfile.attributes.CoreAttributes;
 import org.apache.nifi.flowfile.attributes.StandardFlowFileMediaType;
@@ -53,7 +54,7 @@ import org.apache.nifi.util.FlowFileUnpackager;
 import org.apache.nifi.util.FlowFileUnpackagerV1;
 import org.apache.nifi.util.FlowFileUnpackagerV2;
 import org.apache.nifi.util.FlowFileUnpackagerV3;
-import org.eclipse.jetty.ee10.servlet.ServletContextRequest;
+import org.eclipse.jetty.ee11.servlet.ServletContextRequest;
 
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
@@ -357,13 +358,15 @@ public class ListenHTTPServlet extends HttpServlet {
 
             // put metadata on flowfile
             final String nameVal = request.getHeader(CoreAttributes.FILENAME.key());
-            if (StringUtils.isNotBlank(nameVal)) {
+            // Favor filename extracted from unpackager over filename in header
+            if (StringUtils.isBlank(attributes.get(CoreAttributes.FILENAME.key())) && StringUtils.isNotBlank(nameVal)) {
                 attributes.put(CoreAttributes.FILENAME.key(), nameVal);
             }
 
-            String sourceSystemFlowFileIdentifier = attributes.remove(CoreAttributes.UUID.key());
+            String sourceSystemFlowFileIdentifier = request.getHeader(CoreAttributes.UUID.key()) == null
+                    ? attributes.remove(CoreAttributes.UUID.key()) : request.getHeader(CoreAttributes.UUID.key());
             if (sourceSystemFlowFileIdentifier != null) {
-                sourceSystemFlowFileIdentifier = "urn:nifi:" + sourceSystemFlowFileIdentifier;
+                sourceSystemFlowFileIdentifier = "urn:nifi:" + sourceSystemFlowFileIdentifier; //NOPMD
             }
 
             flowFile = session.putAllAttributes(flowFile, attributes);
@@ -455,7 +458,7 @@ public class ListenHTTPServlet extends HttpServlet {
             unpackager = new FlowFileUnpackagerV3();
         } else if (StandardFlowFileMediaType.VERSION_2.getMediaType().equals(contentType)) {
             unpackager = new FlowFileUnpackagerV2();
-        } else if (StringUtils.startsWith(contentType, StandardFlowFileMediaType.VERSION_UNSPECIFIED.getMediaType())) {
+        } else if (Strings.CS.startsWith(contentType, StandardFlowFileMediaType.VERSION_UNSPECIFIED.getMediaType())) {
             unpackager = new FlowFileUnpackagerV1();
         } else {
             unpackager = null;

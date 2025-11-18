@@ -29,6 +29,7 @@ import org.apache.nifi.annotation.lifecycle.OnStopped;
 import org.apache.nifi.components.AllowableValue;
 import org.apache.nifi.components.PropertyDescriptor;
 import org.apache.nifi.expression.ExpressionLanguageScope;
+import org.apache.nifi.migration.PropertyConfiguration;
 import org.apache.nifi.processor.AbstractProcessor;
 import org.apache.nifi.processor.ProcessContext;
 import org.apache.nifi.processor.util.StandardValidators;
@@ -37,6 +38,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.util.List;
 
+@SuppressWarnings("PMD.LooseCoupling")
 abstract class SplunkAPICall extends AbstractProcessor {
     private static final String REQUEST_CHANNEL_HEADER_NAME = "X-Splunk-Request-Channel";
 
@@ -53,7 +55,6 @@ abstract class SplunkAPICall extends AbstractProcessor {
 
     static final PropertyDescriptor SCHEME = new PropertyDescriptor.Builder()
             .name("Scheme")
-            .displayName("Scheme")
             .description("The scheme for connecting to Splunk.")
             .allowableValues(HTTPS_SCHEME, HTTP_SCHEME)
             .defaultValue(HTTPS_SCHEME)
@@ -62,7 +63,6 @@ abstract class SplunkAPICall extends AbstractProcessor {
 
     static final PropertyDescriptor HOSTNAME = new PropertyDescriptor.Builder()
             .name("Hostname")
-            .displayName("Hostname")
             .description("The ip address or hostname of the Splunk server.")
             .addValidator(StandardValidators.NON_EMPTY_VALIDATOR)
             .defaultValue("localhost")
@@ -70,9 +70,8 @@ abstract class SplunkAPICall extends AbstractProcessor {
             .expressionLanguageSupported(ExpressionLanguageScope.ENVIRONMENT)
             .build();
 
-    static final PropertyDescriptor PORT = new PropertyDescriptor
-            .Builder().name("Port")
-            .displayName("HTTP Event Collector Port")
+    static final PropertyDescriptor PORT = new PropertyDescriptor.Builder()
+            .name("HTTP Event Collector Port")
             .description("The HTTP Event Collector HTTP Port Number.")
             .required(true)
             .addValidator(StandardValidators.PORT_VALIDATOR)
@@ -82,7 +81,6 @@ abstract class SplunkAPICall extends AbstractProcessor {
 
     static final PropertyDescriptor SECURITY_PROTOCOL = new PropertyDescriptor.Builder()
             .name("Security Protocol")
-            .displayName("Security Protocol")
             .description("The security protocol to use for communicating with Splunk.")
             .addValidator(StandardValidators.NON_EMPTY_VALIDATOR)
             .allowableValues(TLS_1_2_VALUE, TLS_1_1_VALUE, TLS_1_VALUE, SSL_3_VALUE)
@@ -91,7 +89,6 @@ abstract class SplunkAPICall extends AbstractProcessor {
 
     static final PropertyDescriptor OWNER = new PropertyDescriptor.Builder()
             .name("Owner")
-            .displayName("Owner")
             .description("The owner to pass to Splunk.")
             .addValidator(StandardValidators.NON_EMPTY_VALIDATOR)
             .required(false)
@@ -99,8 +96,7 @@ abstract class SplunkAPICall extends AbstractProcessor {
             .build();
 
     static final PropertyDescriptor TOKEN = new PropertyDescriptor.Builder()
-            .name("Token")
-            .displayName("HTTP Event Collector Token")
+            .name("HTTP Event Collector Token")
             .description("HTTP Event Collector token starting with the string Splunk. For example \'Splunk 1234578-abcd-1234-abcd-1234abcd\'")
             .addValidator(StandardValidators.NON_EMPTY_VALIDATOR)
             .required(false)
@@ -109,7 +105,6 @@ abstract class SplunkAPICall extends AbstractProcessor {
 
     static final PropertyDescriptor USERNAME = new PropertyDescriptor.Builder()
             .name("Username")
-            .displayName("Username")
             .description("The username to authenticate to Splunk.")
             .addValidator(StandardValidators.NON_EMPTY_VALIDATOR)
             .required(false)
@@ -118,7 +113,6 @@ abstract class SplunkAPICall extends AbstractProcessor {
 
     static final PropertyDescriptor PASSWORD = new PropertyDescriptor.Builder()
             .name("Password")
-            .displayName("Password")
             .description("The password to authenticate to Splunk.")
             .addValidator(StandardValidators.NON_EMPTY_VALIDATOR)
             .required(false)
@@ -126,8 +120,7 @@ abstract class SplunkAPICall extends AbstractProcessor {
             .build();
 
     static final PropertyDescriptor REQUEST_CHANNEL = new PropertyDescriptor.Builder()
-            .name("request-channel")
-            .displayName("Splunk Request Channel")
+            .name("Splunk Request Channel")
             .description("Identifier of the used request channel.")
             .required(true)
             .addValidator(StandardValidators.NON_EMPTY_VALIDATOR)
@@ -212,6 +205,13 @@ abstract class SplunkAPICall extends AbstractProcessor {
 
         requestChannel = null;
         splunkServiceArguments = null;
+    }
+
+    @Override
+    public void migrateProperties(PropertyConfiguration config) {
+        config.renameProperty("Port", PORT.getName());
+        config.renameProperty("Token", TOKEN.getName());
+        config.renameProperty("request-channel", REQUEST_CHANNEL.getName());
     }
 
     protected ResponseMessage call(final String endpoint, final RequestMessage request)  {

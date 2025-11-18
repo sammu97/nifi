@@ -33,6 +33,7 @@ import org.apache.nifi.dbcp.DBCPService;
 import org.apache.nifi.expression.ExpressionLanguageScope;
 import org.apache.nifi.flowfile.FlowFile;
 import org.apache.nifi.flowfile.attributes.FragmentAttributes;
+import org.apache.nifi.migration.PropertyConfiguration;
 import org.apache.nifi.processor.AbstractSessionFactoryProcessor;
 import org.apache.nifi.processor.FlowFileFilter;
 import org.apache.nifi.processor.ProcessContext;
@@ -126,8 +127,7 @@ public class PutSQL extends AbstractSessionFactoryProcessor {
             .build();
 
     static final PropertyDescriptor SQL_STATEMENT = new PropertyDescriptor.Builder()
-            .name("putsql-sql-statement")
-            .displayName("SQL Statement")
+            .name("SQL Statement")
             .description("The SQL statement to execute. The statement can be empty, a constant value, or built from attributes "
                     + "using Expression Language. If this property is specified, it will be used regardless of the content of "
                     + "incoming FlowFiles. If this property is empty, the content of the incoming FlowFile is expected "
@@ -138,8 +138,7 @@ public class PutSQL extends AbstractSessionFactoryProcessor {
             .build();
 
     static final PropertyDescriptor AUTO_COMMIT = new PropertyDescriptor.Builder()
-            .name("database-session-autocommit")
-            .displayName("Database Session AutoCommit")
+            .name("Database Session AutoCommit")
             .description("The autocommit mode to set on the database connection being used. If set to false, the operation(s) will be explicitly committed or rolled back "
                     + "(based on success or failure respectively), if set to true the driver/database handles the commit/rollback.")
             .allowableValues("true", "false")
@@ -218,6 +217,13 @@ public class PutSQL extends AbstractSessionFactoryProcessor {
     private static final String ERROR_MESSAGE_ATTR = "error.message";
     private static final String ERROR_CODE_ATTR = "error.code";
     private static final String ERROR_SQL_STATE_ATTR = "error.sql.state";
+
+    @Override
+    public void migrateProperties(PropertyConfiguration config) {
+        config.renameProperty("putsql-sql-statement", SQL_STATEMENT.getName());
+        config.renameProperty("database-session-autocommit", AUTO_COMMIT.getName());
+        config.renameProperty(RollbackOnFailure.OLD_ROLLBACK_ON_FAILURE_PROPERTY_NAME, RollbackOnFailure.ROLLBACK_ON_FAILURE.getName());
+    }
 
     @Override
     protected List<PropertyDescriptor> getSupportedPropertyDescriptors() {
@@ -701,29 +707,50 @@ public class PutSQL extends AbstractSessionFactoryProcessor {
 
         final int batchSize = context.getProperty(BATCH_SIZE).asInteger();
         final FlowFileFilter dbcpServiceFlowFileFilter = context.getProperty(CONNECTION_POOL).asControllerService(DBCPService.class).getFlowFileFilter(batchSize);
-        List<FlowFile> flowFiles;
+        final List<FlowFile> selectedFlowFiles;
         if (useTransactions) {
             final TransactionalFlowFileFilter filter = new TransactionalFlowFileFilter(dbcpServiceFlowFileFilter);
-            flowFiles = session.get(filter);
+            selectedFlowFiles = session.get(filter);
             fragmentedTransaction = filter.isFragmentedTransaction();
         } else {
             if (dbcpServiceFlowFileFilter == null) {
-                flowFiles = session.get(batchSize);
+                selectedFlowFiles = session.get(batchSize);
             } else {
-                flowFiles = session.get(dbcpServiceFlowFileFilter);
+                selectedFlowFiles = session.get(dbcpServiceFlowFileFilter);
             }
         }
 
-        if (flowFiles.isEmpty()) {
+        final List<FlowFile> validFlowFiles;
+        // The ConnectionPool service has a FlowFileFilter when, and only when it is a DBCPConnectionPoolLookup.
+        // As such, it requires incoming FileFiles to have a 'database.name' attribute
+        if (
+                dbcpServiceFlowFileFilter != null
+                        && !selectedFlowFiles.isEmpty()
+                        // The filtered FlowFiles are homogenous. If one lacks 'database.name', all do.
+                        && selectedFlowFiles.getFirst().getAttribute("database.name") == null
+        ) {
+            selectedFlowFiles.forEach(flowFile -> getLogger().warn(
+                    "{} missing attribute named [database.name] Routing to [{}]",
+                    flowFile,
+                    REL_FAILURE.getName()
+            ));
+
+            result.routeTo(selectedFlowFiles, REL_FAILURE);
+            validFlowFiles = List.of();
+        } else {
+            validFlowFiles = selectedFlowFiles;
+        }
+
+        if (validFlowFiles.isEmpty()) {
             return null;
         }
 
         // If we are supporting fragmented transactions, verify that all FlowFiles are correct
         if (fragmentedTransaction) {
             try {
-                if (!isFragmentedTransactionReady(flowFiles, context.getProperty(TRANSACTION_TIMEOUT).asTimePeriod(TimeUnit.MILLISECONDS))) {
+                if (!isFragmentedTransactionReady(validFlowFiles, context.getProperty(TRANSACTION_TIMEOUT).asTimePeriod(TimeUnit.MILLISECONDS))) {
                     // Not ready, penalize FlowFiles and put it back to self.
-                    flowFiles.forEach(f -> result.routeTo(session.penalize(f), Relationship.SELF));
+                    validFlowFiles.forEach(f -> result.routeTo(session.penalize(f), Relationship.SELF));
                     return null;
                 }
 
@@ -731,16 +758,16 @@ public class PutSQL extends AbstractSessionFactoryProcessor {
                 // Map relationship based on context, and then let default handler to handle.
                 final ErrorTypes.Result adjustedRoute = adjustError.apply(functionContext, ErrorTypes.InvalidInput);
                 onGroupError(context, session, result)
-                        .apply(functionContext, () -> flowFiles, adjustedRoute, e);
+                        .apply(functionContext, () -> validFlowFiles, adjustedRoute, e);
 
                 return null;
             }
 
             // sort by fragment index.
-            flowFiles.sort(Comparator.comparing(o -> Integer.parseInt(o.getAttribute(FRAGMENT_INDEX_ATTR))));
+            validFlowFiles.sort(Comparator.comparing(o -> Integer.parseInt(o.getAttribute(FRAGMENT_INDEX_ATTR))));
         }
 
-        return new FlowFilePoll(flowFiles, fragmentedTransaction);
+        return new FlowFilePoll(validFlowFiles, fragmentedTransaction);
     }
 
 

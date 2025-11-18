@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-import { Component, OnDestroy } from '@angular/core';
+import { Component, OnDestroy, inject } from '@angular/core';
 import { Store } from '@ngrx/store';
 import { UpdateAttributeApplicationState } from '../../../state';
 import { isDefinedAndNotNull } from '@nifi/shared';
@@ -35,7 +35,6 @@ import {
 } from '../state/advanced-ui-parameters/advanced-ui-parameters.actions';
 import { selectRulesState } from '../state/rules/rules.selectors';
 import { selectEvaluationContextState } from '../state/evaluation-context/evaluation-context.selectors';
-import { NfEl } from '../ui/ua-editor/modes/nfel';
 
 @Component({
     selector: 'update-attribute',
@@ -44,14 +43,13 @@ import { NfEl } from '../ui/ua-editor/modes/nfel';
     standalone: false
 })
 export class UpdateAttribute implements OnDestroy {
+    private store = inject<Store<UpdateAttributeApplicationState>>(Store);
+
     rulesState = this.store.selectSignal(selectRulesState);
     evaluationContextState = this.store.selectSignal(selectEvaluationContextState);
     editable = this.store.selectSignal(selectEditable);
 
-    constructor(
-        private store: Store<UpdateAttributeApplicationState>,
-        private nfel: NfEl // note: nfel is referenced here to ensure the el function details are loaded when the application loads
-    ) {
+    constructor() {
         this.store
             .select(selectAdvancedUiParametersFromRoute)
             .pipe(isDefinedAndNotNull(), takeUntilDestroyed())

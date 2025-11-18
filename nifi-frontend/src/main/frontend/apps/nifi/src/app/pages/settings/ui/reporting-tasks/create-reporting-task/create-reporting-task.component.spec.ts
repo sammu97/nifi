@@ -18,46 +18,64 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 
 import { CreateReportingTask } from './create-reporting-task.component';
-import { CreateReportingTaskDialogRequest } from '../../../state/reporting-tasks';
-import { MAT_DIALOG_DATA, MatDialogRef } from '@angular/material/dialog';
+import { MatDialogRef } from '@angular/material/dialog';
 import { provideMockStore } from '@ngrx/store/testing';
-import { initialState } from '../../../../../state/extension-types/extension-types.reducer';
+import { initialExtensionsTypesState } from '../../../../../state/extension-types/extension-types.reducer';
+import { extensionTypesFeatureKey } from '../../../../../state/extension-types';
+import { initialState as initialReportingTasksState } from '../../../state/reporting-tasks/reporting-tasks.reducer';
+import { reportingTasksFeatureKey } from '../../../state/reporting-tasks';
 import { NoopAnimationsModule } from '@angular/platform-browser/animations';
+import { MatIconTestingModule } from '@angular/material/icon/testing';
+import { MockComponent } from 'ng-mocks';
+import { DocumentedType } from '../../../../../state/shared';
+import { ExtensionCreation } from '../../../../../ui/common/extension-creation/extension-creation.component';
+import { of } from 'rxjs';
+import { initialState as initialErrorState } from '../../../../../state/error/error.reducer';
+import { errorFeatureKey } from '../../../../../state/error';
 
 describe('CreateReportingTask', () => {
     let component: CreateReportingTask;
     let fixture: ComponentFixture<CreateReportingTask>;
 
-    const data: CreateReportingTaskDialogRequest = {
-        reportingTaskTypes: [
-            {
-                type: 'org.apache.nifi.reporting.azure.loganalytics.AzureLogAnalyticsProvenanceReportingTask',
-                bundle: {
-                    group: 'org.apache.nifi',
-                    artifact: 'nifi-azure-nar',
-                    version: '2.0.0-SNAPSHOT'
-                },
-                description: 'Publishes Provenance events to to a Azure Log Analytics workspace.',
-                restricted: false,
-                tags: ['provenace', 'log analytics', 'reporting', 'azure']
-            }
-        ]
-    };
+    const reportingTaskTypes: DocumentedType[] = [
+        {
+            type: 'org.apache.nifi.reporting.azure.loganalytics.AzureLogAnalyticsProvenanceReportingTask',
+            bundle: {
+                group: 'org.apache.nifi',
+                artifact: 'nifi-azure-nar',
+                version: '2.0.0-SNAPSHOT'
+            },
+            description: 'Publishes Provenance events to to a Azure Log Analytics workspace.',
+            restricted: false,
+            tags: ['provenace', 'log analytics', 'reporting', 'azure']
+        }
+    ];
 
     beforeEach(() => {
         TestBed.configureTestingModule({
-            imports: [CreateReportingTask, NoopAnimationsModule],
+            imports: [
+                CreateReportingTask,
+                NoopAnimationsModule,
+                MatIconTestingModule,
+                MockComponent(ExtensionCreation)
+            ],
             providers: [
-                {
-                    provide: MAT_DIALOG_DATA,
-                    useValue: data
-                },
-                provideMockStore({ initialState }),
+                provideMockStore({
+                    initialState: {
+                        [errorFeatureKey]: initialErrorState,
+                        [extensionTypesFeatureKey]: initialExtensionsTypesState,
+                        settings: {
+                            [reportingTasksFeatureKey]: initialReportingTasksState
+                        }
+                    }
+                }),
                 { provide: MatDialogRef, useValue: null }
             ]
         });
         fixture = TestBed.createComponent(CreateReportingTask);
         component = fixture.componentInstance;
+        component.reportingTaskTypes$ = of(reportingTaskTypes);
+        component.reportingTaskTypesLoadingStatus$ = of('success');
         fixture.detectChanges();
     });
 

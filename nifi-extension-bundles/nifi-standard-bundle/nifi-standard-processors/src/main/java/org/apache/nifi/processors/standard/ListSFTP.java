@@ -110,6 +110,7 @@ public class ListSFTP extends ListFileTransfer {
             ListFile.MAX_AGE,
             ListFile.MIN_SIZE,
             ListFile.MAX_SIZE,
+            SFTPTransfer.ALGORITHM_CONFIGURATION,
             SFTPTransfer.CIPHERS_ALLOWED,
             SFTPTransfer.KEY_ALGORITHMS_ALLOWED,
             SFTPTransfer.KEY_EXCHANGE_ALGORITHMS_ALLOWED,
@@ -128,6 +129,11 @@ public class ListSFTP extends ListFileTransfer {
         super.migrateProperties(config);
         FTPTransfer.migrateProxyProperties(config);
         config.removeProperty(FileTransfer.REMOTE_POLL_BATCH_SIZE.getName());
+        SFTPTransfer.migrateAlgorithmProperties(config);
+        config.renameProperty(SFTPTransfer.OLD_FOLLOW_SYMLINK_PROPERTY_NAME, SFTPTransfer.FOLLOW_SYMLINK.getName());
+        config.renameProperty(ListedEntityTracker.OLD_TRACKING_STATE_CACHE_PROPERTY_NAME, ListedEntityTracker.TRACKING_STATE_CACHE.getName());
+        config.renameProperty(ListedEntityTracker.OLD_TRACKING_TIME_WINDOW_PROPERTY_NAME, ListedEntityTracker.TRACKING_TIME_WINDOW.getName());
+        config.renameProperty(ListedEntityTracker.OLD_INITIAL_LISTING_TARGET_PROPERTY_NAME, ListedEntityTracker.INITIAL_LISTING_TARGET.getName());
     }
 
     @Override

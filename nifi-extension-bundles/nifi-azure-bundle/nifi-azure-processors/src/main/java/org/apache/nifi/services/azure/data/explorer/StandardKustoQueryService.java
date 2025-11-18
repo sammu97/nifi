@@ -19,7 +19,6 @@ package org.apache.nifi.services.azure.data.explorer;
 import com.microsoft.azure.kusto.data.ClientFactory;
 import com.microsoft.azure.kusto.data.StreamingClient;
 import com.microsoft.azure.kusto.data.auth.ConnectionStringBuilder;
-import org.apache.commons.lang3.tuple.Pair;
 import org.apache.nifi.annotation.documentation.CapabilityDescription;
 import org.apache.nifi.annotation.documentation.Tags;
 import org.apache.nifi.annotation.lifecycle.OnEnabled;
@@ -33,6 +32,7 @@ import org.apache.nifi.processor.util.StandardValidators;
 import java.io.InputStream;
 import java.net.URISyntaxException;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 
 @Tags({"Azure", "Data", "Explorer", "ADX", "Kusto"})
@@ -41,7 +41,6 @@ public class StandardKustoQueryService extends AbstractControllerService impleme
 
     public static final PropertyDescriptor CLUSTER_URI = new PropertyDescriptor.Builder()
             .name("Cluster URI")
-            .displayName("Cluster URI")
             .description("Azure Data Explorer Cluster URI")
             .required(true)
             .addValidator(StandardValidators.URL_VALIDATOR)
@@ -49,7 +48,6 @@ public class StandardKustoQueryService extends AbstractControllerService impleme
 
     public static final PropertyDescriptor AUTHENTICATION_STRATEGY = new PropertyDescriptor.Builder()
             .name("Authentication Strategy")
-            .displayName("Authentication Strategy")
             .description("Authentication method for access to Azure Data Explorer")
             .required(true)
             .defaultValue(KustoAuthenticationStrategy.MANAGED_IDENTITY)
@@ -58,7 +56,6 @@ public class StandardKustoQueryService extends AbstractControllerService impleme
 
     public static final PropertyDescriptor APPLICATION_CLIENT_ID = new PropertyDescriptor.Builder()
             .name("Application Client ID")
-            .displayName("Application Client ID")
             .description("Azure Data Explorer Application Client Identifier for Authentication")
             .required(true)
             .addValidator(StandardValidators.NON_EMPTY_VALIDATOR)
@@ -66,7 +63,6 @@ public class StandardKustoQueryService extends AbstractControllerService impleme
 
     public static final PropertyDescriptor APPLICATION_TENANT_ID = new PropertyDescriptor.Builder()
             .name("Application Tenant ID")
-            .displayName("Application Tenant ID")
             .description("Azure Data Explorer Application Tenant Identifier for Authentication")
             .required(true)
             .addValidator(StandardValidators.NON_EMPTY_VALIDATOR)
@@ -75,7 +71,6 @@ public class StandardKustoQueryService extends AbstractControllerService impleme
 
     public static final PropertyDescriptor APPLICATION_KEY = new PropertyDescriptor.Builder()
             .name("Application Key")
-            .displayName("Application Key")
             .description("Azure Data Explorer Application Key for Authentication")
             .required(true)
             .sensitive(true)
@@ -98,7 +93,7 @@ public class StandardKustoQueryService extends AbstractControllerService impleme
         return PROPERTY_DESCRIPTORS;
     }
 
-    public static final Pair<String, String> NIFI_SOURCE = Pair.of("processor", "nifi-source");
+    public static final Map<String, String> NIFI_SOURCE = Map.of("processor", "nifi-source");
 
     @OnEnabled
     public void onEnabled(final ConfigurationContext context) throws ProcessException, URISyntaxException {
@@ -138,7 +133,6 @@ public class StandardKustoQueryService extends AbstractControllerService impleme
         return ClientFactory.createStreamingClient(connectionStringBuilder);
     }
 
-    @SuppressWarnings("unchecked")
     private ConnectionStringBuilder getConnectionStringBuilder(final ConfigurationContext context) {
         final String clusterUrl = context.getProperty(CLUSTER_URI).getValue();
         final String clientId = context.getProperty(APPLICATION_CLIENT_ID).getValue();
@@ -151,6 +145,7 @@ public class StandardKustoQueryService extends AbstractControllerService impleme
                 yield ConnectionStringBuilder.createWithAadApplicationCredentials(clusterUrl, clientId, applicationKey, tenantId);
             }
             case MANAGED_IDENTITY -> ConnectionStringBuilder.createWithAadManagedIdentity(clusterUrl, clientId);
+            case AZ_CLI_DEV_ONLY -> ConnectionStringBuilder.createWithAzureCli(clusterUrl);
         };
 
         builder.setConnectorDetails("Kusto.Nifi.Source", StandardKustoQueryService.class.getPackage().getImplementationVersion(), null, null, false, null, NIFI_SOURCE);

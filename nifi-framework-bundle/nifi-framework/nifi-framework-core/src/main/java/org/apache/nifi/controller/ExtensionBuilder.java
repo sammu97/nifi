@@ -245,7 +245,7 @@ public class ExtensionBuilder {
        }
 
        boolean creationSuccessful = true;
-       final StandardLoggingContext loggingContext = new StandardLoggingContext(null);
+       final StandardLoggingContext loggingContext = new StandardLoggingContext();
        LoggableComponent<Processor> loggableComponent;
        try {
            loggableComponent = createLoggableProcessor(loggingContext);
@@ -437,9 +437,9 @@ public class ExtensionBuilder {
        if (stateManagerProvider == null) {
            throw new IllegalStateException("State Manager Provider must be specified");
        }
-       final StandardLoggingContext loggingContext = new StandardLoggingContext(null);
+
        try {
-           return createControllerServiceNode(loggingContext);
+           return createControllerServiceNode();
        } catch (final Throwable t) {
            logger.error("Could not create Controller Service of type {} from {} for ID {} due to: {}; creating \"Ghost\" implementation", type, bundleCoordinate, identifier, t.getMessage());
            if (logger.isDebugEnabled()) {
@@ -514,6 +514,7 @@ public class ExtensionBuilder {
        final ValidationContextFactory validationContextFactory = createValidationContextFactory(serviceProvider);
        final ReportingTaskNode taskNode;
        if (creationSuccessful) {
+           stateManagerProvider.getStateManager(identifier, reportingTask.getComponent().getClass());
            taskNode = new StandardReportingTaskNode(reportingTask, identifier, flowController, processScheduler,
                    validationContextFactory, reloadComponent, extensionManager, validationTrigger);
            taskNode.setName(taskNode.getReportingTask().getClass().getSimpleName());
@@ -534,9 +535,10 @@ public class ExtensionBuilder {
    }
 
    private ParameterProviderNode createParameterProviderNode(final LoggableComponent<ParameterProvider> parameterProvider, final boolean creationSuccessful) {
-       final ValidationContextFactory validationContextFactory = new StandardValidationContextFactory(serviceProvider, ruleViolationsManager, flowAnalyzer);
+       final ValidationContextFactory validationContextFactory = createValidationContextFactory(serviceProvider);
        final ParameterProviderNode parameterProviderNode;
        if (creationSuccessful) {
+           stateManagerProvider.getStateManager(identifier, parameterProvider.getComponent().getClass());
            parameterProviderNode = new StandardParameterProviderNode(parameterProvider, identifier, flowController,
                    flowController.getControllerServiceProvider(), validationContextFactory, reloadComponent, extensionManager,
                    validationTrigger);
@@ -555,7 +557,7 @@ public class ExtensionBuilder {
    }
 
    private FlowRegistryClientNode createFlowRegistryClientNode(final LoggableComponent<FlowRegistryClient> client, final boolean creationSuccessful) {
-       final ValidationContextFactory validationContextFactory = new StandardValidationContextFactory(serviceProvider, ruleViolationsManager, flowAnalyzer);
+       final ValidationContextFactory validationContextFactory = createValidationContextFactory(serviceProvider);
        final StandardFlowRegistryClientNode clientNode;
 
        if (creationSuccessful) {
@@ -634,7 +636,7 @@ public class ExtensionBuilder {
        }
    }
 
-   private ControllerServiceNode createControllerServiceNode(final StandardLoggingContext loggingContext)
+   private ControllerServiceNode createControllerServiceNode()
        throws ClassNotFoundException, IllegalAccessException, InstantiationException, InitializationException, NoSuchMethodException, InvocationTargetException {
 
        final ClassLoader ctxClassLoader = Thread.currentThread().getContextClassLoader();
@@ -665,10 +667,11 @@ public class ExtensionBuilder {
            }
 
            logger.info("Created Controller Service of type {} with identifier {}", type, identifier);
-           final ComponentLog serviceLogger = new SimpleProcessLogger(identifier, serviceImpl, new StandardLoggingContext(null));
+           final StandardLoggingContext loggingContext = new StandardLoggingContext();
+           final ComponentLog serviceLogger = new SimpleProcessLogger(identifier, serviceImpl, loggingContext);
            final TerminationAwareLogger terminationAwareLogger = new TerminationAwareLogger(serviceLogger);
 
-           final StateManager stateManager = stateManagerProvider.getStateManager(identifier);
+           final StateManager stateManager = stateManagerProvider.getStateManager(identifier, serviceImpl.getClass());
            final ControllerServiceInitializationContext initContext = new StandardControllerServiceInitializationContext(identifier, terminationAwareLogger,
                    serviceProvider, stateManager, kerberosConfig, nodeTypeProvider);
            serviceImpl.initialize(initContext);
@@ -682,6 +685,7 @@ public class ExtensionBuilder {
            final ControllerServiceNode serviceNode = new StandardControllerServiceNode(originalLoggableComponent, proxiedLoggableComponent, invocationHandler,
                    identifier, validationContextFactory, serviceProvider, reloadComponent, extensionManager, validationTrigger);
            serviceNode.setName(rawClass.getSimpleName());
+           // Set Controller Service Node in Logging Context to populate Process Group information
            loggingContext.setComponent(serviceNode);
 
            invocationHandler.setServiceNode(serviceNode);
@@ -765,17 +769,15 @@ public class ExtensionBuilder {
        final ControllerServiceInvocationHandler invocationHandler = new StandardControllerServiceInvocationHandler(extensionManager, ghostService);
 
        final ValidationContextFactory validationContextFactory = createValidationContextFactory(serviceProvider);
-       final ControllerServiceNode serviceNode = new StandardControllerServiceNode(proxiedLoggableComponent, proxiedLoggableComponent, invocationHandler, identifier,
+       return new StandardControllerServiceNode(proxiedLoggableComponent, proxiedLoggableComponent, invocationHandler, identifier,
                validationContextFactory, serviceProvider, componentType, type, reloadComponent, extensionManager, validationTrigger, true);
-
-       return serviceNode;
    }
 
    private LoggableComponent<Processor> createLoggableProcessor(final LoggingContext loggingContext) throws ProcessorInstantiationException {
        try {
            final LoggableComponent<Processor> processorComponent;
            if (PythonBundle.isPythonCoordinate(bundleCoordinate)) {
-               processorComponent = createLoggablePythonProcessor();
+               processorComponent = createLoggablePythonProcessor(loggingContext);
            } else {
                processorComponent = createLoggableComponent(Processor.class, loggingContext);
            }
@@ -798,7 +800,7 @@ public class ExtensionBuilder {
 
    private LoggableComponent<ReportingTask> createLoggableReportingTask() throws ReportingTaskInstantiationException {
        try {
-           final LoggableComponent<ReportingTask> taskComponent = createLoggableComponent(ReportingTask.class, new StandardLoggingContext(null));
+           final LoggableComponent<ReportingTask> taskComponent = createLoggableComponent(ReportingTask.class, new StandardLoggingContext());
 
            final String taskName = taskComponent.getComponent().getClass().getSimpleName();
            final ReportingInitializationContext config = new StandardReportingInitializationContext(identifier, taskName,
@@ -817,7 +819,7 @@ public class ExtensionBuilder {
 
    private LoggableComponent<FlowAnalysisRule> createLoggableFlowAnalysisRule() throws FlowAnalysisRuleInstantiationException {
        try {
-           final LoggableComponent<FlowAnalysisRule> loggableComponent = createLoggableComponent(FlowAnalysisRule.class, new StandardLoggingContext(null));
+           final LoggableComponent<FlowAnalysisRule> loggableComponent = createLoggableComponent(FlowAnalysisRule.class, new StandardLoggingContext());
 
            final FlowAnalysisRuleInitializationContext config = new StandardFlowAnalysisInitializationContext(identifier,
                    loggableComponent.getLogger(), serviceProvider, kerberosConfig, nodeTypeProvider);
@@ -834,6 +836,7 @@ public class ExtensionBuilder {
        final ValidationContextFactory validationContextFactory = createValidationContextFactory(serviceProvider);
        final FlowAnalysisRuleNode ruleNode;
        if (creationSuccessful) {
+           stateManagerProvider.getStateManager(identifier, flowAnalysisRule.getComponent().getClass());
            ruleNode = new StandardFlowAnalysisRuleNode(flowAnalysisRule, identifier, flowController,
                validationContextFactory, ruleViolationsManager, reloadComponent, extensionManager, validationTrigger);
            ruleNode.setName(ruleNode.getFlowAnalysisRule().getClass().getSimpleName());
@@ -851,7 +854,7 @@ public class ExtensionBuilder {
 
    private LoggableComponent<FlowRegistryClient> createLoggableFlowRegistryClient() throws FlowRepositoryClientInstantiationException {
        try {
-           final LoggableComponent<FlowRegistryClient> clientComponent = createLoggableComponent(FlowRegistryClient.class, new StandardLoggingContext(null));
+           final LoggableComponent<FlowRegistryClient> clientComponent = createLoggableComponent(FlowRegistryClient.class, new StandardLoggingContext());
 
            final FlowRegistryClientInitializationContext context = new StandardFlowRegistryClientInitializationContext(
                    identifier, clientComponent.getLogger(), systemSslContext);
@@ -867,7 +870,7 @@ public class ExtensionBuilder {
 
    private LoggableComponent<ParameterProvider> createLoggableParameterProvider() throws ParameterProviderInstantiationException {
        try {
-           final LoggableComponent<ParameterProvider> providerComponent = createLoggableComponent(ParameterProvider.class, new StandardLoggingContext(null));
+           final LoggableComponent<ParameterProvider> providerComponent = createLoggableComponent(ParameterProvider.class, new StandardLoggingContext());
 
            final String taskName = providerComponent.getComponent().getClass().getSimpleName();
            final ParameterProviderInitializationContext config = new StandardParameterProviderInitializationContext(identifier, taskName,
@@ -884,7 +887,7 @@ public class ExtensionBuilder {
        }
    }
 
-   private LoggableComponent<Processor> createLoggablePythonProcessor() {
+   private LoggableComponent<Processor> createLoggablePythonProcessor(final LoggingContext loggingContext) {
        final ClassLoader ctxClassLoader = Thread.currentThread().getContextClassLoader();
        try {
            final Bundle bundle = extensionManager.getBundle(bundleCoordinate);
@@ -898,7 +901,7 @@ public class ExtensionBuilder {
 
            final Processor processor = pythonBridge.createProcessor(identifier, type, bundleCoordinate.getVersion(), true, true);
 
-           final ComponentLog componentLog = new SimpleProcessLogger(identifier, processor, new StandardLoggingContext(null));
+           final ComponentLog componentLog = new SimpleProcessLogger(identifier, processor, loggingContext);
            final TerminationAwareLogger terminationAwareLogger = new TerminationAwareLogger(componentLog);
 
            final ProcessorInitializationContext initContext = new StandardProcessorInitializationContext(identifier, terminationAwareLogger,

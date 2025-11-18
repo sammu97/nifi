@@ -139,7 +139,7 @@ public class StatelessFlowManager extends AbstractFlowManager implements FlowMan
     @Override
     public RemoteProcessGroup createRemoteProcessGroup(final String id, final String uris) {
         return new StandardRemoteProcessGroup(id, uris, null, statelessEngine.getProcessScheduler(), statelessEngine.getBulletinRepository(), sslContext,
-            statelessEngine.getStateManagerProvider().getStateManager(id), TimeUnit.SECONDS.toMillis(30));
+            statelessEngine.getStateManagerProvider().getStateManager(id, StandardRemoteProcessGroup.class), TimeUnit.SECONDS.toMillis(30));
     }
 
     @Override
@@ -179,14 +179,19 @@ public class StatelessFlowManager extends AbstractFlowManager implements FlowMan
             }
 
             try (final NarCloseable ignored = NarCloseable.withComponentNarLoader(extensionManager, procNode.getProcessor().getClass(), procNode.getProcessor().getIdentifier())) {
-                final StateManager stateManager = statelessEngine.getStateManagerProvider().getStateManager(id);
+                final Class<?> componentClass = procNode.getProcessor() == null ? null : procNode.getProcessor().getClass();
+                final StateManager stateManager = statelessEngine.getStateManagerProvider().getStateManager(id, componentClass);
                 final StandardProcessContext processContext = new StandardProcessContext(procNode, statelessEngine.getControllerServiceProvider(),
                         stateManager, () -> false, new StatelessNodeTypeProvider());
                 ReflectionUtils.quietlyInvokeMethodsWithAnnotation(OnConfigurationRestored.class, procNode.getProcessor(), processContext);
             }
 
             LogRepositoryFactory.getRepository(procNode.getIdentifier()).setLogger(procNode.getLogger());
-            if (registerLogObserver) {
+
+            // Only register an observer is there is no currently one registered. We do this because in stateless we create
+            // a new ProcessorNode for each Concurrent Task every time that a dataflow is triggered, and we don't want to
+            // register multiple observers for the same ProcessorNode.
+            if (registerLogObserver && !logRepository.hasObserver()) {
                 logRepository.addObserver(procNode.getBulletinLevel(), new ProcessorLogObserver(bulletinRepository, procNode));
             }
 

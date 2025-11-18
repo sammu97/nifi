@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-import { Component, Inject } from '@angular/core';
+import { Component, inject } from '@angular/core';
 import { MAT_DIALOG_DATA } from '@angular/material/dialog';
 import { CreateProcessorDialogRequest } from '../../../../../state/flow';
 import { Store } from '@ngrx/store';
@@ -25,6 +25,10 @@ import { ExtensionCreation } from '../../../../../../../ui/common/extension-crea
 import { DocumentedType } from '../../../../../../../state/shared';
 import { selectSaving } from '../../../../../state/flow/flow.selectors';
 import { AsyncPipe } from '@angular/common';
+import {
+    selectExtensionTypesLoadingStatus,
+    selectProcessorTypes
+} from '../../../../../../../state/extension-types/extension-types.selectors';
 
 @Component({
     selector: 'create-processor',
@@ -33,15 +37,12 @@ import { AsyncPipe } from '@angular/common';
     styleUrls: ['./create-processor.component.scss']
 })
 export class CreateProcessor {
-    processorTypes: DocumentedType[];
-    saving$ = this.store.select(selectSaving);
+    private dialogRequest = inject<CreateProcessorDialogRequest>(MAT_DIALOG_DATA);
+    private store = inject<Store<CanvasState>>(Store);
 
-    constructor(
-        @Inject(MAT_DIALOG_DATA) private dialogRequest: CreateProcessorDialogRequest,
-        private store: Store<CanvasState>
-    ) {
-        this.processorTypes = dialogRequest.processorTypes;
-    }
+    processorTypes$ = this.store.select(selectProcessorTypes);
+    processorTypesLoadingStatus$ = this.store.select(selectExtensionTypesLoadingStatus);
+    saving$ = this.store.select(selectSaving);
 
     createProcessor(processorType: DocumentedType): void {
         this.store.dispatch(

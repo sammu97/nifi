@@ -76,7 +76,8 @@ public class StandardReloadComponent implements ReloadComponent {
         // save the instance class loader to use it for calling OnRemoved on the existing processor
         final ClassLoader existingInstanceClassLoader = extensionManager.getInstanceClassLoader(id);
 
-        final StateManager stateManager = flowController.getStateManagerProvider().getStateManager(id);
+        final Class<?> componentClass = existingNode.getProcessor() == null ? null : existingNode.getProcessor().getClass();
+        final StateManager stateManager = flowController.getStateManagerProvider().getStateManager(id, componentClass);
         final StandardProcessContext processContext = new StandardProcessContext(existingNode, flowController.getControllerServiceProvider(),
             stateManager, () -> false, flowController);
 
@@ -96,6 +97,7 @@ public class StandardReloadComponent implements ReloadComponent {
         // attempt the creation to make sure it works before firing the OnRemoved methods below
         final String classloaderIsolationKey = existingNode.getClassLoaderIsolationKey(processContext);
         final ProcessorNode newNode = flowController.getFlowManager().createProcessor(newType, id, bundleCoordinate, additionalUrls, true, false, classloaderIsolationKey);
+        newNode.setProcessGroup(existingNode.getProcessGroup());
 
         // set the new processor in the existing node
         final ComponentLog componentLogger = new SimpleProcessLogger(id, newNode.getProcessor(), new StandardLoggingContext(newNode));
@@ -113,6 +115,7 @@ public class StandardReloadComponent implements ReloadComponent {
         existingNode.onConfigurationRestored(processContext);
 
         logger.debug("Triggering async validation of {} due to processor reload", existingNode);
+        existingNode.resetValidationState();
         flowController.getValidationTrigger().trigger(existingNode);
     }
 
@@ -149,6 +152,7 @@ public class StandardReloadComponent implements ReloadComponent {
         // attempt the creation to make sure it works before firing the OnRemoved methods below
         final String classloaderIsolationKey = existingNode.getClassLoaderIsolationKey(configurationContext);
         final ControllerServiceNode newNode = flowController.getFlowManager().createControllerService(newType, id, bundleCoordinate, additionalUrls, true, false, classloaderIsolationKey);
+        newNode.setProcessGroup(existingNode.getProcessGroup());
 
         // take the invocation handler that was created for new proxy and is set to look at the new node,
         // and set it to look at the existing node
@@ -171,6 +175,7 @@ public class StandardReloadComponent implements ReloadComponent {
         existingNode.refreshProperties();
 
         logger.debug("Triggering async validation of {} due to controller service reload", existingNode);
+        existingNode.resetValidationState();
         flowController.getValidationTrigger().triggerAsync(existingNode);
     }
 
@@ -207,7 +212,7 @@ public class StandardReloadComponent implements ReloadComponent {
         final ReportingTaskNode newNode = flowController.getFlowManager().createReportingTask(newType, id, bundleCoordinate, additionalUrls, true, false, classloaderIsolationKey);
 
         // set the new reporting task into the existing node
-        final ComponentLog componentLogger = new SimpleProcessLogger(id, existingNode.getReportingTask(), new StandardLoggingContext(null));
+        final ComponentLog componentLogger = new SimpleProcessLogger(id, existingNode.getReportingTask(), new StandardLoggingContext());
         final TerminationAwareLogger terminationAwareLogger = new TerminationAwareLogger(componentLogger);
         LogRepositoryFactory.getRepository(id).setLogger(terminationAwareLogger);
 
@@ -219,6 +224,7 @@ public class StandardReloadComponent implements ReloadComponent {
         existingNode.refreshProperties();
 
         logger.debug("Triggering async validation of {} due to reporting task reload", existingNode);
+        existingNode.resetValidationState();
         flowController.getValidationTrigger().triggerAsync(existingNode);
     }
 
@@ -256,7 +262,7 @@ public class StandardReloadComponent implements ReloadComponent {
         final FlowAnalysisRuleNode newNode = flowController.getFlowManager().createFlowAnalysisRule(newType, id, bundleCoordinate, additionalUrls, true, false, classloaderIsolationKey);
 
         // set the new flow analysis rule into the existing node
-        final ComponentLog componentLogger = new SimpleProcessLogger(id, existingNode.getFlowAnalysisRule(), new StandardLoggingContext(null));
+        final ComponentLog componentLogger = new SimpleProcessLogger(id, existingNode.getFlowAnalysisRule(), new StandardLoggingContext());
         final TerminationAwareLogger terminationAwareLogger = new TerminationAwareLogger(componentLogger);
         LogRepositoryFactory.getRepository(id).setLogger(terminationAwareLogger);
 
@@ -268,6 +274,7 @@ public class StandardReloadComponent implements ReloadComponent {
         existingNode.refreshProperties();
 
         logger.debug("Triggering async validation of {} due to flow analysis rule reload", existingNode);
+        existingNode.resetValidationState();
         flowController.getValidationTrigger().triggerAsync(existingNode);
     }
 
@@ -303,7 +310,7 @@ public class StandardReloadComponent implements ReloadComponent {
         }
 
         // set the new parameter provider into the existing node
-        final ComponentLog componentLogger = new SimpleProcessLogger(id, existingNode.getParameterProvider(), new StandardLoggingContext(null));
+        final ComponentLog componentLogger = new SimpleProcessLogger(id, existingNode.getParameterProvider(), new StandardLoggingContext());
         final TerminationAwareLogger terminationAwareLogger = new TerminationAwareLogger(componentLogger);
         LogRepositoryFactory.getRepository(id).setLogger(terminationAwareLogger);
 
@@ -316,6 +323,7 @@ public class StandardReloadComponent implements ReloadComponent {
         existingNode.refreshProperties();
 
         logger.debug("Triggering async validation of {} due to parameter provider reload", existingNode);
+        existingNode.resetValidationState();
         flowController.getValidationTrigger().triggerAsync(existingNode);
     }
 
@@ -343,8 +351,8 @@ public class StandardReloadComponent implements ReloadComponent {
         final FlowRegistryClientNode newNode = flowController.getFlowManager().createFlowRegistryClient(newType, id, bundleCoordinate, additionalUrls, true, false, null);
         extensionManager.closeURLClassLoader(id, existingInstanceClassLoader);
 
-        // set the new flow registyr client into the existing node
-        final ComponentLog componentLogger = new SimpleProcessLogger(id, existingNode.getComponent(), new StandardLoggingContext(null));
+        // set the new flow registry client into the existing node
+        final ComponentLog componentLogger = new SimpleProcessLogger(id, existingNode.getComponent(), new StandardLoggingContext());
         final TerminationAwareLogger terminationAwareLogger = new TerminationAwareLogger(componentLogger);
         LogRepositoryFactory.getRepository(id).setLogger(terminationAwareLogger);
 
@@ -357,6 +365,7 @@ public class StandardReloadComponent implements ReloadComponent {
         existingNode.refreshProperties();
 
         logger.debug("Triggering async validation of {} due to flow registry client reload", existingNode);
+        existingNode.resetValidationState();
         flowController.getValidationTrigger().triggerAsync(existingNode);
 
     }

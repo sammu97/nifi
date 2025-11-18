@@ -16,7 +16,6 @@
  */
 package org.apache.nifi.processors.aws.lambda;
 
-import com.amazonaws.util.Base64;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.nifi.annotation.behavior.InputRequirement;
 import org.apache.nifi.annotation.behavior.InputRequirement.Requirement;
@@ -30,7 +29,7 @@ import org.apache.nifi.flowfile.FlowFile;
 import org.apache.nifi.processor.ProcessContext;
 import org.apache.nifi.processor.ProcessSession;
 import org.apache.nifi.processor.util.StandardValidators;
-import org.apache.nifi.processors.aws.v2.AbstractAwsSyncProcessor;
+import org.apache.nifi.processors.aws.AbstractAwsSyncProcessor;
 import software.amazon.awssdk.awscore.exception.AwsServiceException;
 import software.amazon.awssdk.core.SdkBytes;
 import software.amazon.awssdk.services.lambda.LambdaClient;
@@ -47,10 +46,14 @@ import software.amazon.awssdk.services.lambda.model.TooManyRequestsException;
 import software.amazon.awssdk.services.lambda.model.UnsupportedMediaTypeException;
 
 import java.nio.charset.Charset;
+import java.util.Base64;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
+
+import static org.apache.nifi.processors.aws.region.RegionUtil.CUSTOM_REGION;
+import static org.apache.nifi.processors.aws.region.RegionUtil.REGION;
 
 @InputRequirement(Requirement.INPUT_REQUIRED)
 @Tags({"amazon", "aws", "lambda", "put"})
@@ -102,7 +105,9 @@ public class PutLambda extends AbstractAwsSyncProcessor<LambdaClient, LambdaClie
             AWS_LAMBDA_FUNCTION_NAME,
             AWS_LAMBDA_FUNCTION_QUALIFIER,
             REGION,
+            CUSTOM_REGION,
             AWS_CREDENTIALS_PROVIDER_SERVICE,
+            SSL_CONTEXT_SERVICE,
             TIMEOUT,
             PROXY_CONFIGURATION_SERVICE,
             ENDPOINT_OVERRIDE);
@@ -150,7 +155,7 @@ public class PutLambda extends AbstractAwsSyncProcessor<LambdaClient, LambdaClie
 
             final String logResult = response.logResult();
             if (StringUtils.isNotBlank(logResult)) {
-                flowFile = session.putAttribute(flowFile, AWS_LAMBDA_RESULT_LOG, new String(Base64.decode(logResult), DEFAULT_CHARSET));
+                flowFile = session.putAttribute(flowFile, AWS_LAMBDA_RESULT_LOG, new String(Base64.getDecoder().decode(logResult), DEFAULT_CHARSET));
             }
 
             if (response.payload() != null) {

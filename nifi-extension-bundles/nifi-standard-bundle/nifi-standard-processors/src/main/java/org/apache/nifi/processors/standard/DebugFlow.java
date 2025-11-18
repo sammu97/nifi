@@ -210,7 +210,6 @@ public class DebugFlow extends AbstractProcessor {
         .build();
     static final PropertyDescriptor CUSTOM_VALIDATE_SLEEP_TIME = new PropertyDescriptor.Builder()
         .name("CustomValidate Pause Time")
-        .displayName("CustomValidate Pause Time")
         .description("Specifies how long the processor should sleep in the customValidate() method")
         .addValidator(StandardValidators.TIME_PERIOD_VALIDATOR)
         .defaultValue("0 sec")
@@ -550,7 +549,7 @@ public class DebugFlow extends AbstractProcessor {
             try {
                 if (sleepMillis > 0) {
                     sleep(sleepMillis, context.getProperty(IGNORE_INTERRUPTS).asBoolean());
-                    getLogger().info("DebugFlow finishes sleeping at completion of its onTrigger() method");
+                    getLogger().info("DebugFlow finished sleeping at completion of its onTrigger() method");
                 }
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();

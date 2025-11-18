@@ -17,13 +17,13 @@
 package org.apache.nifi.toolkit.cli.impl.command.registry.extension;
 
 import org.apache.commons.cli.ParseException;
+import org.apache.nifi.extension.manifest.ExtensionType;
 import org.apache.nifi.registry.client.ExtensionClient;
 import org.apache.nifi.registry.client.NiFiRegistryClient;
 import org.apache.nifi.registry.client.NiFiRegistryException;
-import org.apache.nifi.extension.ExtensionFilterParams;
-import org.apache.nifi.extension.ExtensionMetadata;
-import org.apache.nifi.extension.ExtensionMetadataContainer;
-import org.apache.nifi.extension.manifest.ExtensionType;
+import org.apache.nifi.registry.extension.component.ExtensionFilterParams;
+import org.apache.nifi.registry.extension.component.ExtensionMetadata;
+import org.apache.nifi.registry.extension.component.ExtensionMetadataContainer;
 import org.apache.nifi.toolkit.cli.api.Context;
 import org.apache.nifi.toolkit.cli.impl.command.CommandOption;
 import org.apache.nifi.toolkit.cli.impl.command.registry.AbstractNiFiRegistryCommand;
@@ -96,10 +96,10 @@ public class ListExtensions extends AbstractNiFiRegistryCommand<ExtensionMetadat
                 final ExtensionType extensionType = ExtensionType.valueOf(extensionTypeArg);
                 builder.extensionType(extensionType);
             } catch (Exception e) {
-                throw new NiFiRegistryException("Invalid extension type, should be one of "
-                        + ExtensionType.PROCESSOR.toString() + ", "
-                        + ExtensionType.CONTROLLER_SERVICE.toString() + ", or "
-                        + ExtensionType.REPORTING_TASK.toString());
+                final String supportedTypes = Arrays.stream(ExtensionType.values())
+                        .map(Enum::toString)
+                        .collect(Collectors.joining(", "));
+                throw new NiFiRegistryException("Invalid extension type, should be one of " + supportedTypes);
             }
         }
 

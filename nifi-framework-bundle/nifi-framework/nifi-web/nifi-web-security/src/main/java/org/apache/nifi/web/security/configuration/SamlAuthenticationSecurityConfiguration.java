@@ -73,7 +73,7 @@ import org.springframework.security.saml2.provider.service.web.authentication.lo
 import org.springframework.security.saml2.provider.service.web.authentication.logout.Saml2LogoutResponseResolver;
 import org.springframework.security.saml2.provider.service.web.authentication.logout.Saml2RelyingPartyInitiatedLogoutSuccessHandler;
 import org.springframework.security.web.authentication.session.NullAuthenticatedSessionStrategy;
-import org.springframework.security.web.util.matcher.AntPathRequestMatcher;
+import org.springframework.security.web.servlet.util.matcher.PathPatternRequestMatcher;
 
 import javax.net.ssl.X509ExtendedKeyManager;
 import javax.net.ssl.X509ExtendedTrustManager;
@@ -86,7 +86,7 @@ import java.util.concurrent.TimeUnit;
  */
 @Configuration
 public class SamlAuthenticationSecurityConfiguration {
-    private static final Duration REQUEST_EXPIRATION = Duration.ofSeconds(60);
+    private static final Duration REQUEST_EXPIRATION = Duration.ofMinutes(5);
 
     private static final long REQUEST_MAXIMUM_CACHE_SIZE = 1000;
 
@@ -122,7 +122,7 @@ public class SamlAuthenticationSecurityConfiguration {
     @Bean
     public Saml2MetadataFilter saml2MetadataFilter() {
         final Saml2MetadataFilter filter = new Saml2MetadataFilter(relyingPartyRegistrationResolver(), saml2MetadataResolver());
-        filter.setRequestMatcher(new AntPathRequestMatcher(SamlUrlPath.METADATA.getPath()));
+        filter.setRequestMatcher(PathPatternRequestMatcher.withDefaults().matcher(SamlUrlPath.METADATA.getPath()));
         return filter;
     }
 
@@ -182,7 +182,7 @@ public class SamlAuthenticationSecurityConfiguration {
                 saml2LogoutResponseResolver(),
                 saml2SingleLogoutHandler()
         );
-        filter.setLogoutRequestMatcher(new AntPathRequestMatcher(SamlUrlPath.SINGLE_LOGOUT_RESPONSE.getPath()));
+        filter.setLogoutRequestMatcher(PathPatternRequestMatcher.withDefaults().matcher(SamlUrlPath.SINGLE_LOGOUT_RESPONSE.getPath()));
         return filter;
     }
 
@@ -199,7 +199,7 @@ public class SamlAuthenticationSecurityConfiguration {
                 saml2LogoutSuccessHandler()
         );
         saml2LogoutResponseFilter.setLogoutRequestRepository(saml2LogoutRequestRepository());
-        saml2LogoutResponseFilter.setLogoutRequestMatcher(new AntPathRequestMatcher(SamlUrlPath.SINGLE_LOGOUT_RESPONSE.getPath()));
+        saml2LogoutResponseFilter.setLogoutRequestMatcher(PathPatternRequestMatcher.withDefaults().matcher(SamlUrlPath.SINGLE_LOGOUT_RESPONSE.getPath()));
         return saml2LogoutResponseFilter;
     }
 

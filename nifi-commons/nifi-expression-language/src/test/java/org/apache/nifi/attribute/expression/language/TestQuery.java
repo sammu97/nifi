@@ -447,6 +447,14 @@ public class TestQuery {
         verifyEquals("${#{'test param'}:append(' - '):append(#{'test param'})}", attributes, stateValues, parameters, "unit - unit");
 
         verifyEquals("${#{\"test param\"}}", attributes, stateValues, parameters, "unit");
+
+        // Unquoted parameter reference with spaces should also work
+        verifyEquals("${#{test param}}", attributes, stateValues, parameters, "unit");
+
+        // Unquoted parameter used within a function argument
+        parameters.put("Date Format", "yyyy");
+        final String expectedYear = String.valueOf(java.time.LocalDate.now().getYear());
+        verifyEquals("${now():format(#{Date Format})}", attributes, stateValues, parameters, expectedYear);
     }
 
     @Test
@@ -1009,6 +1017,29 @@ public class TestQuery {
         verifyEquals("${date:toNumber():toDate():format('yyyy')}", attributes, "2014");
         verifyEquals("${date:toDate():toNumber():format('yyyy')}", attributes, "2014");
         verifyEquals("${date:toDate():toNumber():toDate():toNumber():toDate():toNumber():format('yyyy')}", attributes, "2014");
+    }
+
+    @Test
+    public void testToDateAdjustedWithTimeZone() {
+        final String dateFormat = "yyyy-MM-dd";
+        final String created = "2025-06-01";
+        final String timeZoneId = "UTC";
+        final TimeZone timeZone = TimeZone.getTimeZone(timeZoneId);
+
+        // Build Calendar for java.util.Date to match expected result of toDate() function
+        final Calendar calendar = Calendar.getInstance();
+        calendar.clear();
+        calendar.set(Calendar.YEAR, 2025);
+        calendar.set(Calendar.MONTH, Calendar.JUNE);
+        calendar.set(Calendar.DAY_OF_MONTH, 1);
+        calendar.setTimeZone(timeZone);
+
+        // Expected Date with System Default Time Zone and hours adjusted based on Time Zone specified
+        final Date expected = calendar.getTime();
+
+        final String expression = "${created:toDate('%s', '%s')}".formatted(dateFormat, timeZoneId);
+        final Map<String, String> attributes = Map.of("created", created);
+        verifyEquals(expression, attributes, expected);
     }
 
     @Test
@@ -2366,8 +2397,18 @@ public class TestQuery {
         verifyEquals("${str_attr:replaceByPattern('myValue[3-4]:test,.*:foo')}", attributes, "foo");
         verifyEquals("${str_attr:replaceByPattern('myValue[3-4]:test,abc:foo')}", attributes, "myValue2");
         verifyEquals("${str_attr:replaceByPattern('myValue[3-4]:test, abc:foo, myValue[1-4]:xyz')}", attributes, "xyz");
+        verifyEquals("${str_attr:replaceByPattern('myValue1:test,myValue2:test,myValue3:test')}", attributes, "test");
 
         verifyEquals("${str_attr:replaceByPattern(${literal('myValue[3-4]:test'):append(','):append(' .*:foo')})}", attributes, "foo");
+    }
+
+    @Test
+    public void testReplaceByPatternWithSameReplacement() {
+        final String expression = "${attr:replaceByPattern('a:ok,b:ok,c:ok')}";
+
+        verifyEquals(expression, Map.of("attr", "a"), "ok");
+        verifyEquals(expression, Map.of("attr", "b"), "ok");
+        verifyEquals(expression, Map.of("attr", "c"), "ok");
     }
 
     @Test
@@ -2591,6 +2632,8 @@ public class TestQuery {
             }
         } else if (expectedResult instanceof Boolean) {
             assertEquals(ResultType.BOOLEAN, result.getResultType());
+        } else if (expectedResult instanceof Date) {
+            assertEquals(ResultType.DATE, result.getResultType());
         } else {
             assertEquals(ResultType.STRING, result.getResultType());
         }

@@ -283,7 +283,7 @@ public abstract class AbstractFlowAnalysisRuleNode extends AbstractComponentNode
         } catch (Exception e) {
             final Throwable cause = e instanceof InvocationTargetException ? e.getCause() : e;
 
-            final ComponentLog componentLog = new SimpleProcessLogger(getIdentifier(), getFlowAnalysisRule(), new StandardLoggingContext(null));
+            final ComponentLog componentLog = new SimpleProcessLogger(getIdentifier(), getFlowAnalysisRule(), new StandardLoggingContext());
 
             componentLog.error("Failed to invoke {} method", cause);
 
@@ -366,6 +366,7 @@ public abstract class AbstractFlowAnalysisRuleNode extends AbstractComponentNode
         return results;
     }
 
+    @Override
     public Optional<ProcessGroup> getParentProcessGroup() {
         return Optional.empty();
     }

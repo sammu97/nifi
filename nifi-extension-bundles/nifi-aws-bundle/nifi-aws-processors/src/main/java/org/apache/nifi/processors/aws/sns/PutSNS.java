@@ -32,9 +32,9 @@ import org.apache.nifi.processor.ProcessContext;
 import org.apache.nifi.processor.ProcessSession;
 import org.apache.nifi.processor.exception.ProcessException;
 import org.apache.nifi.processor.util.StandardValidators;
+import org.apache.nifi.processors.aws.AbstractAwsSyncProcessor;
 import org.apache.nifi.processors.aws.sqs.GetSQS;
 import org.apache.nifi.processors.aws.sqs.PutSQS;
-import org.apache.nifi.processors.aws.v2.AbstractAwsSyncProcessor;
 import software.amazon.awssdk.services.sns.SnsClient;
 import software.amazon.awssdk.services.sns.SnsClientBuilder;
 import software.amazon.awssdk.services.sns.model.MessageAttributeValue;
@@ -46,6 +46,9 @@ import java.nio.charset.Charset;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+
+import static org.apache.nifi.processors.aws.region.RegionUtil.CUSTOM_REGION;
+import static org.apache.nifi.processors.aws.region.RegionUtil.REGION;
 
 @SupportsBatching
 @SeeAlso({GetSQS.class, PutSQS.class})
@@ -85,7 +88,6 @@ public class PutSNS extends AbstractAwsSyncProcessor<SnsClient, SnsClientBuilder
 
     public static final PropertyDescriptor MESSAGEGROUPID = new PropertyDescriptor.Builder()
             .name("Message Group ID")
-            .displayName("Message Group ID")
             .description("If using FIFO, the message group to which the flowFile belongs")
             .required(false)
             .addValidator(StandardValidators.NON_EMPTY_VALIDATOR)
@@ -94,7 +96,6 @@ public class PutSNS extends AbstractAwsSyncProcessor<SnsClient, SnsClientBuilder
 
     public static final PropertyDescriptor MESSAGEDEDUPLICATIONID = new PropertyDescriptor.Builder()
             .name("Deduplication Message ID")
-            .displayName("Deduplication Message ID")
             .description("The token used for deduplication of sent messages")
             .required(false)
             .addValidator(StandardValidators.NON_EMPTY_VALIDATOR)
@@ -127,6 +128,7 @@ public class PutSNS extends AbstractAwsSyncProcessor<SnsClient, SnsClientBuilder
             ARN_TYPE,
             SUBJECT,
             REGION,
+            CUSTOM_REGION,
             AWS_CREDENTIALS_PROVIDER_SERVICE,
             SSL_CONTEXT_SERVICE,
             TIMEOUT,

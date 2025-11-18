@@ -22,9 +22,9 @@ import java.io.File;
 import java.lang.reflect.Method;
 import java.sql.SQLException;
 import java.sql.SQLFeatureNotSupportedException;
+import java.time.Duration;
 import java.util.Collection;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -50,6 +50,7 @@ import org.apache.nifi.components.state.Scope;
 import org.apache.nifi.controller.ControllerService;
 import org.apache.nifi.dbcp.DBCPService;
 import org.apache.nifi.expression.ExpressionLanguageScope;
+import org.apache.nifi.migration.PropertyConfiguration;
 import org.apache.nifi.processor.AbstractProcessor;
 import org.apache.nifi.processor.ProcessContext;
 import org.apache.nifi.processor.ProcessSession;
@@ -67,10 +68,11 @@ import org.codehaus.groovy.runtime.StackTraceUtils;
 
 @InputRequirement(InputRequirement.Requirement.INPUT_ALLOWED)
 @Tags({"script", "groovy", "groovyx"})
-@CapabilityDescription(
-        "Experimental Extended Groovy script processor. The script is responsible for "
-        + "handling the incoming flow file (transfer to SUCCESS or remove, e.g.) as well as any flow files created by "
-        + "the script. If the handling is incomplete or incorrect, the session will be rolled back.")
+@CapabilityDescription("""
+        Execute custom Groovy script to handle input FlowFiles and route to standard relationships.
+        Script validation includes a timeout of 5 minutes to avoid potential issues with dynamic dependency resolution.
+        """
+)
 @Restricted(
         restrictions = {
                 @Restriction(
@@ -96,8 +98,7 @@ public class ExecuteGroovyScript extends AbstractProcessor {
             + "import org.apache.nifi.processor.util.*;" + "import org.apache.nifi.processors.script.*;" + "import org.apache.nifi.logging.ComponentLog;";
 
     public static final PropertyDescriptor SCRIPT_FILE = new PropertyDescriptor.Builder()
-            .name("groovyx-script-file")
-            .displayName("Script File")
+            .name("Script File")
             .required(false)
             .description("Path to script file to execute. Only one of Script File or Script Body may be used")
             .identifiesExternalResource(ResourceCardinality.SINGLE, ResourceType.FILE)
@@ -105,8 +106,7 @@ public class ExecuteGroovyScript extends AbstractProcessor {
             .build();
 
     public static final PropertyDescriptor SCRIPT_BODY = new PropertyDescriptor.Builder()
-            .name("groovyx-script-body")
-            .displayName("Script Body")
+            .name("Script Body")
             .required(false)
             .description("Body of script to execute. Only one of Script File or Script Body may be used")
             .addValidator(StandardValidators.NON_EMPTY_VALIDATOR)
@@ -115,8 +115,7 @@ public class ExecuteGroovyScript extends AbstractProcessor {
 
     public static String[] VALID_FAIL_STRATEGY = {"rollback", "transfer to failure"};
     public static final PropertyDescriptor FAIL_STRATEGY = new PropertyDescriptor.Builder()
-            .name("groovyx-failure-strategy")
-            .displayName("Failure strategy")
+            .name("Failure Strategy")
             .description("What to do with unhandled exceptions. If you want to manage exception by code then keep the default value `rollback`."
                     + " If `transfer to failure` selected and unhandled exception occurred then all flowFiles received from incoming queues in this session"
                     + " will be transferred to `failure` relationship with additional attributes set: ERROR_MESSAGE and ERROR_STACKTRACE."
@@ -129,8 +128,7 @@ public class ExecuteGroovyScript extends AbstractProcessor {
             .build();
 
     public static final PropertyDescriptor ADD_CLASSPATH = new PropertyDescriptor.Builder()
-            .name("groovyx-additional-classpath")
-            .displayName("Additional classpath")
+            .name("Additional Classpath")
             .required(false)
             .description("Classpath list separated by semicolon or comma. You can use masks like `*`, `*.jar` in file name.")
             .addValidator(StandardValidators.NON_EMPTY_VALIDATOR)
@@ -214,13 +212,29 @@ public class ExecuteGroovyScript extends AbstractProcessor {
         this.addClasspath = context.getProperty(ADD_CLASSPATH).evaluateAttributeExpressions().getValue(); //ADD_CLASSPATH
         this.groovyClasspath = context.newPropertyValue(GROOVY_CLASSPATH).evaluateAttributeExpressions().getValue(); //evaluated from ${groovy.classes.path} global property
 
-        final Collection<ValidationResult> results = new HashSet<>();
+        final ValidationResult.Builder builder = new ValidationResult.Builder()
+                .subject("GroovyScript")
+                .input(scriptFile == null ? null : scriptFile.toString());
+
+        final Thread validationThread = Thread.startVirtualThread(() -> {
+            try {
+                getGroovyScript();
+                builder.valid(true);
+            } catch (final Throwable e) {
+                builder.explanation(e.toString());
+                builder.valid(false);
+            }
+        });
+
         try {
-            getGroovyScript();
-        } catch (Throwable t) {
-            results.add(new ValidationResult.Builder().subject("GroovyScript").input(this.scriptFile != null ? this.scriptFile.toString() : null).valid(false).explanation(t.toString()).build());
+            validationThread.join(Duration.ofMinutes(5));
+        } catch (final InterruptedException e) {
+            builder.valid(false);
+            builder.explanation("Groovy Script validation interrupted after 5 minutes");
         }
-        return results;
+
+        final ValidationResult result = builder.build();
+        return List.of(result);
     }
 
     /**
@@ -340,6 +354,14 @@ public class ExecuteGroovyScript extends AbstractProcessor {
         }
         Thread.currentThread().setContextClassLoader(shell.getClassLoader());
         return script;
+    }
+
+    @Override
+    public void migrateProperties(PropertyConfiguration config) {
+        config.renameProperty("groovyx-script-file", SCRIPT_FILE.getName());
+        config.renameProperty("groovyx-script-body", SCRIPT_BODY.getName());
+        config.renameProperty("groovyx-failure-strategy", FAIL_STRATEGY.getName());
+        config.renameProperty("groovyx-additional-classpath", ADD_CLASSPATH.getName());
     }
 
     /**

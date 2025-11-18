@@ -569,28 +569,24 @@ public class StandardAuthorizableLookup implements AuthorizableLookup {
             case DataTransfer:
             case ProvenanceData:
             case Operation:
-
-                // get the resource type
-                final String baseResource = StringUtils.substringAfter(resource, resourceType.getValue());
-                final ResourceType baseResourceType = ResourceType.fromRawValue(baseResource);
-
-                if (baseResourceType == null) {
-                    throw new ResourceNotFoundException("Unrecognized base resource: " + resource);
+                return handleResourceTypeContainingOtherResourceType(resource, resourceType);
+            case Controller:
+                // Handle Nested Resource Types such as Flow Analysis Rules and Flow Registry Clients
+                final ResourceType nestedResourceType;
+                if (resource.startsWith(ResourceType.RegistryClient.getValue())) {
+                    nestedResourceType = ResourceType.RegistryClient;
+                } else if (resource.startsWith(ResourceType.FlowAnalysisRule.getValue())) {
+                    nestedResourceType = ResourceType.FlowAnalysisRule;
+                } else {
+                    nestedResourceType = null;
                 }
 
-                switch (resourceType) {
-                    case Policy:
-                        return new AccessPolicyAuthorizable(getAccessPolicy(baseResourceType, resource));
-                    case Data:
-                        return new DataAuthorizable(getAccessPolicy(baseResourceType, resource));
-                    case DataTransfer:
-                        return new DataTransferAuthorizable(getAccessPolicy(baseResourceType, resource));
-                    case ProvenanceData:
-                        return new ProvenanceDataAuthorizable(getAccessPolicy(baseResourceType, resource));
-                    case Operation:
-                        return new OperationAuthorizable(getAccessPolicy(baseResourceType, resource));
+                if (nestedResourceType == null) {
+                    return getAccessPolicy(resourceType, resource);
+                } else {
+                    final String componentId = StringUtils.substringAfter(resource, nestedResourceType.getValue()).substring(1);
+                    return getAccessPolicyByResource(nestedResourceType, componentId);
                 }
-
             case RestrictedComponents:
                 final String slashRequiredPermission = StringUtils.substringAfter(resource, resourceType.getValue());
 
@@ -611,6 +607,25 @@ public class StandardAuthorizableLookup implements AuthorizableLookup {
         }
     }
 
+    private Authorizable handleResourceTypeContainingOtherResourceType(final String resource, final ResourceType resourceType) {
+        // get the resource type
+        final String baseResource = StringUtils.substringAfter(resource, resourceType.getValue());
+        final ResourceType baseResourceType = ResourceType.fromRawValue(baseResource);
+
+        if (baseResourceType == null) {
+            throw new ResourceNotFoundException("Unrecognized base resource: " + resource);
+        }
+
+        return switch (resourceType) {
+            case Policy -> new AccessPolicyAuthorizable(getAccessPolicy(baseResourceType, resource));
+            case Data -> new DataAuthorizable(getAccessPolicy(baseResourceType, resource));
+            case DataTransfer -> new DataTransferAuthorizable(getAccessPolicy(baseResourceType, resource));
+            case ProvenanceData -> new ProvenanceDataAuthorizable(getAccessPolicy(baseResourceType, resource));
+            case Operation -> new OperationAuthorizable(getAccessPolicy(baseResourceType, resource));
+            default -> throw new IllegalArgumentException("Cannot use resource type %s in this method".formatted(resourceType));
+        };
+    }
+
     private Authorizable getAccessPolicy(final ResourceType resourceType, final String resource) {
         final String slashComponentId = StringUtils.substringAfter(resource, resourceType.getValue());
         if (slashComponentId.startsWith("/")) {
@@ -621,48 +636,22 @@ public class StandardAuthorizableLookup implements AuthorizableLookup {
     }
 
     private Authorizable getAccessPolicyByResource(final ResourceType resourceType, final String componentId) {
-        Authorizable authorizable = null;
-        switch (resourceType) {
-            case ControllerService:
-                authorizable = getControllerService(componentId).getAuthorizable();
-                break;
-            case Funnel:
-                authorizable = getFunnel(componentId);
-                break;
-            case InputPort:
-                authorizable = getInputPort(componentId);
-                break;
-            case Label:
-                authorizable = getLabel(componentId);
-                break;
-            case OutputPort:
-                authorizable = getOutputPort(componentId);
-                break;
-            case Processor:
-                authorizable = getProcessor(componentId).getAuthorizable();
-                break;
-            case ProcessGroup:
-                authorizable = getProcessGroup(componentId).getAuthorizable();
-                break;
-            case RegistryClient:
-                authorizable = getFlowRegistryClient(componentId).getAuthorizable();
-                break;
-            case RemoteProcessGroup:
-                authorizable = getRemoteProcessGroup(componentId);
-                break;
-            case ReportingTask:
-                authorizable = getReportingTask(componentId).getAuthorizable();
-                break;
-            case FlowAnalysisRule:
-                authorizable = getFlowAnalysisRule(componentId).getAuthorizable();
-                break;
-            case ParameterContext:
-                authorizable = getParameterContext(componentId);
-                break;
-            case ParameterProvider:
-                authorizable = getParameterProvider(componentId).getAuthorizable();
-                break;
-        }
+        Authorizable authorizable = switch (resourceType) {
+            case ControllerService -> getControllerService(componentId).getAuthorizable();
+            case Funnel -> getFunnel(componentId);
+            case InputPort -> getInputPort(componentId);
+            case Label -> getLabel(componentId);
+            case OutputPort -> getOutputPort(componentId);
+            case Processor -> getProcessor(componentId).getAuthorizable();
+            case ProcessGroup -> getProcessGroup(componentId).getAuthorizable();
+            case RegistryClient -> getFlowRegistryClient(componentId).getAuthorizable();
+            case RemoteProcessGroup -> getRemoteProcessGroup(componentId);
+            case ReportingTask -> getReportingTask(componentId).getAuthorizable();
+            case FlowAnalysisRule -> getFlowAnalysisRule(componentId).getAuthorizable();
+            case ParameterContext -> getParameterContext(componentId);
+            case ParameterProvider -> getParameterProvider(componentId).getAuthorizable();
+            default -> null;
+        };
 
         if (authorizable == null) {
             throw new IllegalArgumentException("An unexpected type of resource in this policy " + resourceType.getValue());

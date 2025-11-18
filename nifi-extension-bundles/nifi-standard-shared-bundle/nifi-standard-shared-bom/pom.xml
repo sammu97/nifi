@@ -17,7 +17,7 @@
     <parent>
         <groupId>org.apache.nifi</groupId>
         <artifactId>nifi-standard-services-api-bom</artifactId>
-        <version>2.5.0-SNAPSHOT</version>
+        <version>2.7.0-SNAPSHOT</version>
         <relativePath>../../nifi-standard-services-api-bom</relativePath>
     </parent>
     <artifactId>nifi-standard-shared-bom</artifactId>
@@ -77,7 +77,7 @@
             <dependency>
                 <groupId>com.fasterxml.jackson.core</groupId>
                 <artifactId>jackson-annotations</artifactId>
-                <version>${jackson.bom.version}</version>
+                <version>${jackson.annotations.version}</version>
                 <scope>provided</scope>
             </dependency>
             <dependency>
@@ -121,19 +121,25 @@
             <dependency>
                 <groupId>org.checkerframework</groupId>
                 <artifactId>checker-qual</artifactId>
-                <version>3.49.2</version>
+                <version>3.52.0</version>
                 <scope>provided</scope>
             </dependency>
             <dependency>
                 <groupId>com.google.errorprone</groupId>
                 <artifactId>error_prone_annotations</artifactId>
-                <version>2.33.0</version>
+                <version>2.44.0</version>
                 <scope>provided</scope>
             </dependency>
             <!-- OkHttp -->
             <dependency>
                 <groupId>com.squareup.okhttp3</groupId>
                 <artifactId>okhttp</artifactId>
+                <version>${okhttp.version}</version>
+                <scope>provided</scope>
+            </dependency>
+            <dependency>
+                <groupId>com.squareup.okhttp3</groupId>
+                <artifactId>okhttp-jvm</artifactId>
                 <version>${okhttp.version}</version>
                 <scope>provided</scope>
             </dependency>
@@ -165,7 +171,7 @@
             <dependency>
                 <groupId>org.jetbrains</groupId>
                 <artifactId>annotations</artifactId>
-                <version>24.1.0</version>
+                <version>26.0.2-1</version>
                 <scope>provided</scope>
             </dependency>
             <dependency>
@@ -293,6 +299,10 @@
         <dependency>
             <groupId>com.squareup.okhttp3</groupId>
             <artifactId>okhttp</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.squareup.okhttp3</groupId>
+            <artifactId>okhttp-jvm</artifactId>
         </dependency>
         <dependency>
             <groupId>com.squareup.okio</groupId>

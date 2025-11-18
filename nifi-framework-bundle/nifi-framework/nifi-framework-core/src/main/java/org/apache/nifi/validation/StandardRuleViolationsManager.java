@@ -46,8 +46,6 @@ import java.util.stream.Collectors;
  *  arises.
  */
 public class StandardRuleViolationsManager implements RuleViolationsManager {
-    public StandardRuleViolationsManager() {
-    }
 
     private final ConcurrentMap<String, ConcurrentMap<RuleViolationKey, RuleViolation>> subjectIdToRuleViolation = new ConcurrentHashMap<>();
 
@@ -143,7 +141,7 @@ public class StandardRuleViolationsManager implements RuleViolationsManager {
 
     @Override
     public Collection<RuleViolation> getRuleViolationsForSubject(String subjectId) {
-        HashSet<RuleViolation> ruleViolationsForSubject = Optional.ofNullable(subjectIdToRuleViolation.get(subjectId))
+        Set<RuleViolation> ruleViolationsForSubject = Optional.ofNullable(subjectIdToRuleViolation.get(subjectId))
             .map(Map::values)
             .map(HashSet::new)
             .orElse(new HashSet<>());
@@ -157,6 +155,16 @@ public class StandardRuleViolationsManager implements RuleViolationsManager {
             .map(Map::values).flatMap(Collection::stream)
             .filter(violation -> groupId.equals(violation.getGroupId()))
             .collect(Collectors.toSet());
+
+        return groupViolations;
+    }
+
+    @Override
+    public Collection<RuleViolation> getRuleViolationsForGroups(Collection<String> groupIds) {
+        Set<RuleViolation> groupViolations = subjectIdToRuleViolation.values().stream()
+                .map(Map::values).flatMap(Collection::stream)
+                .filter(violation -> groupIds.contains(violation.getGroupId()))
+                .collect(Collectors.toSet());
 
         return groupViolations;
     }
@@ -188,5 +196,10 @@ public class StandardRuleViolationsManager implements RuleViolationsManager {
     @Override
     public void cleanUp() {
         subjectIdToRuleViolation.entrySet().removeIf(subjectIdAndViolationMap -> subjectIdAndViolationMap.getValue().isEmpty());
+    }
+
+    @Override
+    public boolean isEmpty() {
+        return subjectIdToRuleViolation.isEmpty();
     }
 }

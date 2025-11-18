@@ -46,7 +46,7 @@ final class BufferedStatusHistoryStorage implements StatusHistoryStorage {
     private final String id = UUID.randomUUID().toString();
     private final List<ScheduledFuture<?>> scheduledFutures = new ArrayList<>();
     private final ScheduledExecutorService scheduledExecutorService = Executors
-            .newScheduledThreadPool(1, new BasicThreadFactory.Builder().namingPattern("BufferedStatusHistoryStorage-" + id + "-%d").build());
+            .newScheduledThreadPool(1, BasicThreadFactory.builder().namingPattern("BufferedStatusHistoryStorage-" + id + "-%d").build());
 
     private final StatusHistoryStorage storage;
     private final long persistFrequencyInMs;
@@ -175,7 +175,7 @@ final class BufferedStatusHistoryStorage implements StatusHistoryStorage {
         }
 
         private <T> void flush(final BlockingQueue<T> source, final Consumer<Collection<T>> target) {
-            final ArrayList<T> statusEntries = new ArrayList<>(persistBatchSize);
+            final List<T> statusEntries = new ArrayList<>(persistBatchSize);
             source.drainTo(statusEntries, persistBatchSize);
 
             if (!statusEntries.isEmpty()) {

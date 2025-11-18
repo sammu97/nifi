@@ -20,6 +20,7 @@ package org.apache.nifi.processors.parquet;
 
 
 import org.apache.avro.Schema;
+import org.apache.avro.SchemaFormatter;
 import org.apache.avro.file.DataFileStream;
 import org.apache.avro.generic.GenericDatumReader;
 import org.apache.avro.generic.GenericRecord;
@@ -28,10 +29,12 @@ import org.apache.nifi.annotation.behavior.InputRequirement;
 import org.apache.nifi.annotation.behavior.WritesAttribute;
 import org.apache.nifi.annotation.behavior.WritesAttributes;
 import org.apache.nifi.annotation.documentation.CapabilityDescription;
+import org.apache.nifi.annotation.documentation.DeprecationNotice;
 import org.apache.nifi.annotation.documentation.Tags;
 import org.apache.nifi.components.PropertyDescriptor;
 import org.apache.nifi.flowfile.FlowFile;
 import org.apache.nifi.flowfile.attributes.CoreAttributes;
+import org.apache.nifi.migration.PropertyConfiguration;
 import org.apache.nifi.parquet.stream.NifiParquetOutputFile;
 import org.apache.nifi.parquet.utils.ParquetConfig;
 import org.apache.nifi.parquet.utils.ParquetUtils;
@@ -65,6 +68,9 @@ import static org.apache.nifi.parquet.utils.ParquetUtils.createParquetConfig;
         @WritesAttribute(attribute = "filename", description = "Sets the filename to the existing filename with the extension replaced by / added to by .parquet"),
         @WritesAttribute(attribute = "record.count", description = "Sets the number of records in the parquet file.")
 })
+@DeprecationNotice(reason = "ConvertAvroToParquet is no longer needed since there is the AvroReader which along with ParquetRecordSetWriter can be used in ConvertRecord to achieve the same thing.",
+        classNames = {"org.apache.nifi.processors.standard.ConvertRecord",
+        "org.apache.nifi.avro.AvroReader", "org.apache.nifi.parquet.ParquetRecordSetWriter"})
 public class ConvertAvroToParquet extends AbstractProcessor {
 
     // Attributes
@@ -129,7 +135,7 @@ public class ConvertAvroToParquet extends AbstractProcessor {
                      final DataFileStream<GenericRecord> dataFileReader = new DataFileStream<>(in, new GenericDatumReader<>())) {
 
                     Schema avroSchema = dataFileReader.getSchema();
-                    getLogger().debug(avroSchema.toString(true));
+                    getLogger().debug(SchemaFormatter.format("json/pretty", avroSchema));
                     ParquetWriter<GenericRecord> writer = createParquetWriter(context, flowFile, rawOut, avroSchema );
 
                     try {
@@ -169,6 +175,18 @@ public class ConvertAvroToParquet extends AbstractProcessor {
             getLogger().error("Transferring to failure since failed to convert {} from Avro to Parquet", flowFile, pe);
             session.transfer(flowFile, FAILURE);
         }
+
+    }
+
+    @Override
+    public void migrateProperties(PropertyConfiguration config) {
+        config.renameProperty(ParquetUtils.OLD_ROW_GROUP_SIZE_PROPERTY_NAME, ParquetUtils.ROW_GROUP_SIZE.getName());
+        config.renameProperty(ParquetUtils.OLD_PAGE_SIZE_PROPERTY_NAME, ParquetUtils.PAGE_SIZE.getName());
+        config.renameProperty(ParquetUtils.OLD_DICTIONARY_PAGE_SIZE_PROPERTY_NAME, ParquetUtils.DICTIONARY_PAGE_SIZE.getName());
+        config.renameProperty(ParquetUtils.OLD_MAX_PADDING_SIZE_PROPERTY_NAME, ParquetUtils.MAX_PADDING_SIZE.getName());
+        config.renameProperty(ParquetUtils.OLD_ENABLE_DICTIONARY_ENCODING_PROPERTY_NAME, ParquetUtils.ENABLE_DICTIONARY_ENCODING.getName());
+        config.renameProperty(ParquetUtils.OLD_ENABLE_VALIDATION_PROPERTY_NAME, ParquetUtils.ENABLE_VALIDATION.getName());
+        config.renameProperty(ParquetUtils.OLD_WRITER_VERSION_PROPERTY_NAME, ParquetUtils.WRITER_VERSION.getName());
 
     }
 

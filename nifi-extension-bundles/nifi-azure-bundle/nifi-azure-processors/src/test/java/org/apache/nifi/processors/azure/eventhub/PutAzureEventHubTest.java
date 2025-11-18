@@ -19,10 +19,13 @@ package org.apache.nifi.processors.azure.eventhub;
 import com.azure.messaging.eventhubs.EventHubProducerClient;
 import com.azure.messaging.eventhubs.models.SendOptions;
 import org.apache.nifi.processor.ProcessContext;
+import org.apache.nifi.processors.azure.eventhub.utils.AzureEventHubUtils;
 import org.apache.nifi.proxy.ProxyConfiguration;
 import org.apache.nifi.proxy.ProxyConfigurationService;
 import org.apache.nifi.reporting.InitializationException;
+import org.apache.nifi.shared.azure.eventhubs.AzureEventHubAuthenticationStrategy;
 import org.apache.nifi.shared.azure.eventhubs.AzureEventHubTransportType;
+import org.apache.nifi.util.PropertyMigrationResult;
 import org.apache.nifi.util.TestRunner;
 import org.apache.nifi.util.TestRunners;
 import org.junit.jupiter.api.BeforeEach;
@@ -74,6 +77,8 @@ public class PutAzureEventHubTest {
         testRunner.setProperty(PutAzureEventHub.EVENT_HUB_NAME, EVENT_HUB_NAME);
         testRunner.assertNotValid();
         testRunner.setProperty(PutAzureEventHub.NAMESPACE, EVENT_HUB_NAMESPACE);
+        testRunner.assertValid();
+        testRunner.setProperty(PutAzureEventHub.AUTHENTICATION_STRATEGY, AzureEventHubAuthenticationStrategy.SHARED_ACCESS_SIGNATURE.getValue());
         testRunner.assertNotValid();
         testRunner.setProperty(PutAzureEventHub.ACCESS_POLICY, POLICY_NAME);
         testRunner.assertNotValid();
@@ -83,6 +88,20 @@ public class PutAzureEventHubTest {
         testRunner.assertValid();
         configureProxyControllerService();
         testRunner.assertValid();
+    }
+
+    @Test
+    void testMigration() {
+        TestRunner testRunner = TestRunners.newTestRunner(PutAzureEventHub.class);
+        final PropertyMigrationResult propertyMigrationResult = testRunner.migrateProperties();
+        final Map<String, String> expected = Map.of(
+                "partitioning-key-attribute-name", PutAzureEventHub.PARTITIONING_KEY_ATTRIBUTE_NAME.getName(),
+                "max-batch-size", PutAzureEventHub.MAX_BATCH_SIZE.getName(),
+                AzureEventHubUtils.OLD_POLICY_PRIMARY_KEY_DESCRIPTOR_NAME, PutAzureEventHub.POLICY_PRIMARY_KEY.getName(),
+                AzureEventHubUtils.OLD_USE_MANAGED_IDENTITY_DESCRIPTOR_NAME, AzureEventHubUtils.USE_MANAGED_IDENTITY_PROPERTY_NAME
+        );
+
+        assertEquals(expected, propertyMigrationResult.getPropertiesRenamed());
     }
 
     private void configureProxyControllerService() throws InitializationException {
@@ -102,8 +121,8 @@ public class PutAzureEventHubTest {
         testRunner.setProperty(PutAzureEventHub.EVENT_HUB_NAME, EVENT_HUB_NAME);
         testRunner.assertNotValid();
         testRunner.setProperty(PutAzureEventHub.NAMESPACE, EVENT_HUB_NAMESPACE);
-        testRunner.assertNotValid();
-        testRunner.setProperty(PutAzureEventHub.USE_MANAGED_IDENTITY, Boolean.TRUE.toString());
+        testRunner.assertValid();
+        testRunner.setProperty(PutAzureEventHub.AUTHENTICATION_STRATEGY, AzureEventHubAuthenticationStrategy.MANAGED_IDENTITY.getValue());
         testRunner.assertValid();
     }
 
@@ -188,6 +207,7 @@ public class PutAzureEventHubTest {
     private void setProperties() {
         testRunner.setProperty(PutAzureEventHub.EVENT_HUB_NAME, EVENT_HUB_NAME);
         testRunner.setProperty(PutAzureEventHub.NAMESPACE, EVENT_HUB_NAMESPACE);
+        testRunner.setProperty(PutAzureEventHub.AUTHENTICATION_STRATEGY, AzureEventHubAuthenticationStrategy.SHARED_ACCESS_SIGNATURE.getValue());
         testRunner.setProperty(PutAzureEventHub.ACCESS_POLICY, POLICY_NAME);
         testRunner.setProperty(PutAzureEventHub.POLICY_PRIMARY_KEY, POLICY_KEY);
         testRunner.assertValid();

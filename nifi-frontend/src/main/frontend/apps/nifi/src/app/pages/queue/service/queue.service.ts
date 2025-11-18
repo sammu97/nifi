@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-import { Injectable } from '@angular/core';
+import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
 import { HttpClient, HttpParams } from '@angular/common/http';
 import { NiFiCommon } from '@nifi/shared';
@@ -30,13 +30,11 @@ import { Client } from '../../../service/client.service';
 
 @Injectable({ providedIn: 'root' })
 export class QueueService {
-    private static readonly API: string = '../nifi-api';
+    private httpClient = inject(HttpClient);
+    private nifiCommon = inject(NiFiCommon);
+    private client = inject(Client);
 
-    constructor(
-        private httpClient: HttpClient,
-        private nifiCommon: NiFiCommon,
-        private client: Client
-    ) {}
+    private static readonly API: string = '../nifi-api';
 
     getConnection(connectionId: string): Observable<any> {
         return this.httpClient.get(`${QueueService.API}/connections/${connectionId}`);
@@ -80,7 +78,7 @@ export class QueueService {
             dataUri = `${dataUri}?${query}`;
         }
 
-        window.open(dataUri);
+        window.open(dataUri, '_blank', 'noreferrer');
     }
 
     viewContent(request: ViewFlowFileContentRequest, contentViewerUrl: string): void {
@@ -120,6 +118,6 @@ export class QueueService {
 
         // open the content viewer
         const contentViewerQuery: string = new URLSearchParams(contentViewerParameters).toString();
-        window.open(`${contentViewer}${contentViewerQuery}`);
+        window.open(`${contentViewer}${contentViewerQuery}`, '_blank', 'noreferrer');
     }
 }

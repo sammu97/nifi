@@ -49,6 +49,7 @@ import org.apache.nifi.components.PropertyDescriptor;
 import org.apache.nifi.expression.ExpressionLanguageScope;
 import org.apache.nifi.flowfile.FlowFile;
 import org.apache.nifi.flowfile.attributes.CoreAttributes;
+import org.apache.nifi.migration.PropertyConfiguration;
 import org.apache.nifi.processor.AbstractProcessor;
 import org.apache.nifi.processor.ProcessContext;
 import org.apache.nifi.processor.ProcessSession;
@@ -70,11 +71,20 @@ import static org.apache.nifi.processors.gcp.drive.GoogleDriveAttributes.ID;
 import static org.apache.nifi.processors.gcp.drive.GoogleDriveAttributes.ID_DESC;
 import static org.apache.nifi.processors.gcp.drive.GoogleDriveAttributes.LAST_MODIFYING_USER;
 import static org.apache.nifi.processors.gcp.drive.GoogleDriveAttributes.LAST_MODIFYING_USER_DESC;
+import static org.apache.nifi.processors.gcp.drive.GoogleDriveAttributes.LISTED_FOLDER_ID;
 import static org.apache.nifi.processors.gcp.drive.GoogleDriveAttributes.MIME_TYPE_DESC;
 import static org.apache.nifi.processors.gcp.drive.GoogleDriveAttributes.MODIFIED_TIME;
 import static org.apache.nifi.processors.gcp.drive.GoogleDriveAttributes.MODIFIED_TIME_DESC;
 import static org.apache.nifi.processors.gcp.drive.GoogleDriveAttributes.OWNER;
 import static org.apache.nifi.processors.gcp.drive.GoogleDriveAttributes.OWNER_DESC;
+import static org.apache.nifi.processors.gcp.drive.GoogleDriveAttributes.PARENT_FOLDER_ID;
+import static org.apache.nifi.processors.gcp.drive.GoogleDriveAttributes.PARENT_FOLDER_ID_DESC;
+import static org.apache.nifi.processors.gcp.drive.GoogleDriveAttributes.PARENT_FOLDER_NAME;
+import static org.apache.nifi.processors.gcp.drive.GoogleDriveAttributes.PARENT_FOLDER_NAME_DESC;
+import static org.apache.nifi.processors.gcp.drive.GoogleDriveAttributes.SHARED_DRIVE_ID;
+import static org.apache.nifi.processors.gcp.drive.GoogleDriveAttributes.SHARED_DRIVE_ID_DESC;
+import static org.apache.nifi.processors.gcp.drive.GoogleDriveAttributes.SHARED_DRIVE_NAME;
+import static org.apache.nifi.processors.gcp.drive.GoogleDriveAttributes.SHARED_DRIVE_NAME_DESC;
 import static org.apache.nifi.processors.gcp.drive.GoogleDriveAttributes.SIZE;
 import static org.apache.nifi.processors.gcp.drive.GoogleDriveAttributes.SIZE_AVAILABLE;
 import static org.apache.nifi.processors.gcp.drive.GoogleDriveAttributes.SIZE_AVAILABLE_DESC;
@@ -105,6 +115,10 @@ import static org.apache.nifi.processors.gcp.drive.GoogleDriveAttributes.WEB_VIE
         @WritesAttribute(attribute = LAST_MODIFYING_USER, description = LAST_MODIFYING_USER_DESC),
         @WritesAttribute(attribute = WEB_VIEW_LINK, description = WEB_VIEW_LINK_DESC),
         @WritesAttribute(attribute = WEB_CONTENT_LINK, description = WEB_CONTENT_LINK_DESC),
+        @WritesAttribute(attribute = PARENT_FOLDER_ID, description = PARENT_FOLDER_ID_DESC),
+        @WritesAttribute(attribute = PARENT_FOLDER_NAME, description = PARENT_FOLDER_NAME_DESC),
+        @WritesAttribute(attribute = SHARED_DRIVE_ID, description = SHARED_DRIVE_ID_DESC),
+        @WritesAttribute(attribute = SHARED_DRIVE_NAME, description = SHARED_DRIVE_NAME_DESC),
         @WritesAttribute(attribute = ERROR_CODE, description = ERROR_CODE_DESC),
         @WritesAttribute(attribute = ERROR_MESSAGE, description = ERROR_MESSAGE_DESC)
 })
@@ -136,6 +150,9 @@ import static org.apache.nifi.processors.gcp.drive.GoogleDriveAttributes.WEB_VIE
     }
 )
 public class FetchGoogleDrive extends AbstractProcessor implements GoogleDriveTrait {
+
+    static final String FILE_METADATA_FIELDS_BASIC = "id, name, createdTime, modifiedTime, mimeType, size, exportLinks";
+    static final String FILE_METADATA_FIELDS_EXTENDED = FILE_METADATA_FIELDS_BASIC + ", owners, lastModifyingUser, webViewLink, webContentLink, parents";
 
     private static final long EXPORT_SIZE_LIMIT = 10_000_000;
     private static final String EXPORT_SIZE_ERROR = "exportSizeLimitExceeded";
@@ -191,8 +208,7 @@ public class FetchGoogleDrive extends AbstractProcessor implements GoogleDriveTr
 
 
     public static final PropertyDescriptor FILE_ID = new PropertyDescriptor.Builder()
-            .name("drive-file-id")
-            .displayName("File ID")
+            .name("File ID")
             .description("The Drive ID of the File to fetch. Please see Additional Details for information on how to obtain the Drive ID.")
             .required(true)
             .defaultValue("${drive.id}")
@@ -305,12 +321,30 @@ public class FetchGoogleDrive extends AbstractProcessor implements GoogleDriveTr
 
         final long startNanos = System.nanoTime();
         try {
-            final File fileMetadata = fetchFileMetadata(fileId);
-            final Map<String, String> attributeMap = createGoogleDriveFileInfoBuilder(fileMetadata)
-                    .owner(Optional.ofNullable(fileMetadata.getOwners()).filter(owners -> !owners.isEmpty()).map(List::getFirst).map(User::getDisplayName).orElse(null))
-                    .lastModifyingUser(Optional.ofNullable(fileMetadata.getLastModifyingUser()).map(User::getDisplayName).orElse(null))
-                    .webViewLink(fileMetadata.getWebViewLink())
-                    .webContentLink(fileMetadata.getWebContentLink())
+            final boolean listedFile = flowFile.getAttributes().containsKey(LISTED_FOLDER_ID);
+
+            final File fileMetadata = fetchFileMetadata(fileId, listedFile ? FILE_METADATA_FIELDS_BASIC : FILE_METADATA_FIELDS_EXTENDED);
+            final GoogleDriveFileInfo.Builder fileInfoBuilder = createGoogleDriveFileInfoBuilder(fileMetadata);
+
+            if (!listedFile) {
+                fileInfoBuilder
+                        .owner(Optional.ofNullable(fileMetadata.getOwners()).filter(owners -> !owners.isEmpty()).map(List::getFirst).map(User::getDisplayName).orElse(null))
+                        .lastModifyingUser(Optional.ofNullable(fileMetadata.getLastModifyingUser()).map(User::getDisplayName).orElse(null))
+                        .webViewLink(fileMetadata.getWebViewLink())
+                        .webContentLink(fileMetadata.getWebContentLink());
+
+                Optional.ofNullable(fileMetadata.getParents())
+                        .filter(parents -> !parents.isEmpty())
+                        .map(List::getFirst)
+                        .map(folderId -> getFolderDetails(driveService, folderId))
+                        .ifPresent(folderDetails -> fileInfoBuilder
+                                .parentFolderId(folderDetails.getFolderId())
+                                .parentFolderName(folderDetails.getFolderName())
+                                .sharedDriveId(folderDetails.getSharedDriveId())
+                                .sharedDriveName(folderDetails.getSharedDriveName()));
+            }
+
+            final Map<String, String> attributeMap = fileInfoBuilder
                     .build()
                     .toAttributeMap();
 
@@ -327,6 +361,14 @@ public class FetchGoogleDrive extends AbstractProcessor implements GoogleDriveTr
         } catch (Exception e) {
             handleUnexpectedError(session, flowFile, fileId, e);
         }
+    }
+
+    @Override
+    public void migrateProperties(PropertyConfiguration config) {
+        config.renameProperty("drive-file-id", FILE_ID.getName());
+        config.renameProperty(OLD_CONNECT_TIMEOUT_PROPERTY_NAME, CONNECT_TIMEOUT.getName());
+        config.renameProperty(OLD_READ_TIMEOUT_PROPERTY_NAME, READ_TIMEOUT.getName());
+        config.renameProperty(GoogleUtils.OLD_GCP_CREDENTIALS_PROVIDER_SERVICE_PROPERTY_NAME, GoogleUtils.GCP_CREDENTIALS_PROVIDER_SERVICE.getName());
     }
 
     private String getExportType(final String mimeType, final ProcessContext context) {
@@ -374,7 +416,7 @@ public class FetchGoogleDrive extends AbstractProcessor implements GoogleDriveTr
 
         final String fileExtension = fileExtensions.get(exportMimeType);
         if (fileExtension != null) {
-            attributeMap.put(CoreAttributes.FILENAME.key(), flowFile.getAttribute(CoreAttributes.FILENAME.key()) + fileExtension);
+            attributeMap.put(CoreAttributes.FILENAME.key(), attributeMap.get(CoreAttributes.FILENAME.key()) + fileExtension);
         }
 
         if (fileMetadata.getSize() == null || fileMetadata.getSize() < EXPORT_SIZE_LIMIT) {
@@ -423,12 +465,12 @@ public class FetchGoogleDrive extends AbstractProcessor implements GoogleDriveTr
         return exportLink;
     }
 
-    private File fetchFileMetadata(final String fileId) throws IOException {
+    private File fetchFileMetadata(final String fileId, final String fields) throws IOException {
         return driveService
                 .files()
                 .get(fileId)
                 .setSupportsAllDrives(true)
-                .setFields("id, name, createdTime, modifiedTime, mimeType, size, exportLinks, owners, lastModifyingUser, webViewLink, webContentLink")
+                .setFields(fields)
                 .execute();
     }
 

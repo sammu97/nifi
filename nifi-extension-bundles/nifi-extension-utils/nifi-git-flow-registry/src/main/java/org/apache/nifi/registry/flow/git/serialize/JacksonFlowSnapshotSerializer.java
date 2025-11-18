@@ -36,13 +36,13 @@ import java.io.InputStream;
 public class JacksonFlowSnapshotSerializer implements FlowSnapshotSerializer {
 
     private static final ObjectMapper OBJECT_MAPPER = JsonMapper.builder()
-            .serializationInclusion(JsonInclude.Include.NON_NULL)
             .defaultPropertyInclusion(JsonInclude.Value.construct(JsonInclude.Include.NON_NULL, JsonInclude.Include.NON_NULL))
             .annotationIntrospector(new JakartaXmlBindAnnotationIntrospector(TypeFactory.defaultInstance()))
             .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
             .configure(MapperFeature.SORT_PROPERTIES_ALPHABETICALLY, true)
             .enable(SerializationFeature.INDENT_OUTPUT)
             .addModule(new VersionedComponentModule())
+            .addModule(new SortedStringCollectionsModule())
             .build();
 
     @Override

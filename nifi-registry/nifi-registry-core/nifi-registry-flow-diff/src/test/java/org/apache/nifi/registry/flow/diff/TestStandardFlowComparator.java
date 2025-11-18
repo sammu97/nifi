@@ -17,11 +17,17 @@
 
 package org.apache.nifi.registry.flow.diff;
 
+import org.apache.nifi.flow.ComponentType;
+import org.apache.nifi.flow.ExecutionEngine;
+import org.apache.nifi.flow.ScheduledState;
 import org.apache.nifi.flow.VersionedAsset;
 import org.apache.nifi.flow.VersionedComponent;
+import org.apache.nifi.flow.VersionedControllerService;
+import org.apache.nifi.flow.VersionedFlowCoordinates;
 import org.apache.nifi.flow.VersionedParameter;
 import org.apache.nifi.flow.VersionedParameterContext;
 import org.apache.nifi.flow.VersionedProcessGroup;
+import org.apache.nifi.flow.VersionedProcessor;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -37,6 +43,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class TestStandardFlowComparator {
     private Map<String, String> decryptedToEncrypted;
@@ -176,6 +183,166 @@ public class TestStandardFlowComparator {
         assertEquals(4, differences.size());
     }
 
+    @Test
+    public void testDeepStrategyWithChildPGs() {
+        final Function<String, String> decryptor = encryptedToDecrypted::get;
+
+        final VersionedProcessGroup rootPGA = new VersionedProcessGroup();
+        rootPGA.setIdentifier("rootPG");
+
+        final VersionedProcessGroup rootPGB = new VersionedProcessGroup();
+        rootPGB.setIdentifier("rootPG");
+        final VersionedProcessGroup childPG = new VersionedProcessGroup();
+        childPG.setIdentifier("childPG");
+        rootPGB.getProcessGroups().add(childPG);
+        final VersionedProcessGroup subChildPG = new VersionedProcessGroup();
+        subChildPG.setIdentifier("subChildPG");
+        childPG.getProcessGroups().add(subChildPG);
+        final VersionedProcessor processor = new VersionedProcessor();
+        processor.setIdentifier("processor");
+        childPG.getProcessors().add(processor);
+        final VersionedControllerService controllerService = new VersionedControllerService();
+        controllerService.setIdentifier("controllerService");
+        subChildPG.getControllerServices().add(controllerService);
+
+        // change all configuration of PG to check diff on PG configuration
+        subChildPG.setExecutionEngine(ExecutionEngine.STATELESS);
+        subChildPG.setFlowFileConcurrency("SINGLE_BATCH_PER_NODE");
+        subChildPG.setFlowFileOutboundPolicy("BATCH_OUTPUT");
+        subChildPG.setDefaultBackPressureDataSizeThreshold("1B");
+        subChildPG.setDefaultBackPressureObjectThreshold(1L);
+        subChildPG.setDefaultFlowFileExpiration("10 sec");
+        subChildPG.setParameterContextName("paramContextName");
+        subChildPG.setLogFileSuffix("logSuffix");
+        subChildPG.setScheduledState(ScheduledState.DISABLED);
+        subChildPG.setMaxConcurrentTasks(4);
+        subChildPG.setStatelessFlowTimeout("30 sec");
+
+        final ComparableDataFlow flowA = new StandardComparableDataFlow("Flow A", rootPGA);
+        final ComparableDataFlow flowB = new StandardComparableDataFlow("Flow B", rootPGB);
+
+        // Testing when a child PG is added and the child PG contains components
+
+        comparator = new StandardFlowComparator(flowA, flowB, Collections.emptySet(),
+                new StaticDifferenceDescriptor(), decryptor, VersionedComponent::getIdentifier, FlowComparatorVersionedStrategy.SHALLOW);
+
+        final Set<FlowDifference> diffShallowChildPgAdded = comparator.compare().getDifferences();
+        assertEquals(1, diffShallowChildPgAdded.size());
+        assertTrue(diffShallowChildPgAdded.stream()
+                .anyMatch(difference -> difference.getDifferenceType() == DifferenceType.COMPONENT_ADDED
+                        && difference.getComponentB().getComponentType() == ComponentType.PROCESS_GROUP));
+
+        comparator = new StandardFlowComparator(flowA, flowB, Collections.emptySet(),
+                new StaticDifferenceDescriptor(), decryptor, VersionedComponent::getIdentifier, FlowComparatorVersionedStrategy.DEEP);
+        final Set<FlowDifference> diffDeepChildPgAdded = comparator.compare().getDifferences();
+        assertEquals(15, diffDeepChildPgAdded.size());
+        assertTrue(diffDeepChildPgAdded.stream()
+                .anyMatch(difference -> difference.getDifferenceType() == DifferenceType.COMPONENT_ADDED
+                        && difference.getComponentB().getComponentType() == ComponentType.PROCESS_GROUP
+                        && difference.getComponentB().getIdentifier().equals("childPG")));
+        assertTrue(diffDeepChildPgAdded.stream()
+                .anyMatch(difference -> difference.getDifferenceType() == DifferenceType.COMPONENT_ADDED
+                        && difference.getComponentB().getComponentType() == ComponentType.PROCESS_GROUP
+                        && difference.getComponentB().getIdentifier().equals("subChildPG")));
+        assertTrue(diffDeepChildPgAdded.stream()
+                .anyMatch(difference -> difference.getDifferenceType() == DifferenceType.COMPONENT_ADDED
+                        && difference.getComponentB().getComponentType() == ComponentType.PROCESSOR));
+        assertTrue(diffDeepChildPgAdded.stream()
+                .anyMatch(difference -> difference.getDifferenceType() == DifferenceType.COMPONENT_ADDED
+                        && difference.getComponentB().getComponentType() == ComponentType.CONTROLLER_SERVICE));
+        assertTrue(diffDeepChildPgAdded.stream()
+                .anyMatch(difference -> difference.getDifferenceType() == DifferenceType.EXECUTION_ENGINE_CHANGED
+                        && difference.getComponentB().getComponentType() == ComponentType.PROCESS_GROUP
+                        && difference.getComponentB().getIdentifier().equals("subChildPG")));
+
+        // Testing when a child PG is removed and the child PG contains components
+
+        comparator = new StandardFlowComparator(flowB, flowA, Collections.emptySet(),
+                new StaticDifferenceDescriptor(), decryptor, VersionedComponent::getIdentifier, FlowComparatorVersionedStrategy.SHALLOW);
+
+        final Set<FlowDifference> diffShallowChildPgRemoved = comparator.compare().getDifferences();
+        assertEquals(1, diffShallowChildPgRemoved.size());
+        assertTrue(diffShallowChildPgRemoved.stream()
+                .anyMatch(difference -> difference.getDifferenceType() == DifferenceType.COMPONENT_REMOVED
+                        && difference.getComponentA().getComponentType() == ComponentType.PROCESS_GROUP));
+
+        comparator = new StandardFlowComparator(flowB, flowA, Collections.emptySet(),
+                new StaticDifferenceDescriptor(), decryptor, VersionedComponent::getIdentifier, FlowComparatorVersionedStrategy.DEEP);
+        final Set<FlowDifference> diffDeepChildPgRemoved = comparator.compare().getDifferences();
+        assertEquals(4, diffDeepChildPgRemoved.size());
+        assertTrue(diffDeepChildPgRemoved.stream()
+                .anyMatch(difference -> difference.getDifferenceType() == DifferenceType.COMPONENT_REMOVED
+                        && difference.getComponentA().getComponentType() == ComponentType.PROCESS_GROUP
+                        && difference.getComponentA().getIdentifier().equals("childPG")));
+        assertTrue(diffDeepChildPgRemoved.stream()
+                .anyMatch(difference -> difference.getDifferenceType() == DifferenceType.COMPONENT_REMOVED
+                        && difference.getComponentA().getComponentType() == ComponentType.PROCESS_GROUP
+                        && difference.getComponentA().getIdentifier().equals("subChildPG")));
+        assertTrue(diffDeepChildPgRemoved.stream()
+                .anyMatch(difference -> difference.getDifferenceType() == DifferenceType.COMPONENT_REMOVED
+                        && difference.getComponentA().getComponentType() == ComponentType.PROCESSOR));
+        assertTrue(diffDeepChildPgRemoved.stream()
+                .anyMatch(difference -> difference.getDifferenceType() == DifferenceType.COMPONENT_REMOVED
+                        && difference.getComponentA().getComponentType() == ComponentType.CONTROLLER_SERVICE));
+    }
+
+    @Test
+    public void testScheduledStateChangeDetectedForProcessorInNestedVersionedGroup() {
+        final String rootPgIdentifier = "rootPG";
+        final String nestedPgIdentifier = "nestedPG";
+        final String procIdentifier = "processorZ";
+        final VersionedProcessGroup registryRoot = new VersionedProcessGroup();
+        registryRoot.setIdentifier(rootPgIdentifier);
+
+        final VersionedProcessGroup localRoot = new VersionedProcessGroup();
+        localRoot.setIdentifier(rootPgIdentifier);
+
+        final VersionedProcessGroup registryNested = new VersionedProcessGroup();
+        registryNested.setIdentifier(nestedPgIdentifier);
+        registryNested.setVersionedFlowCoordinates(createVersionedFlowCoordinates());
+        registryRoot.getProcessGroups().add(registryNested);
+
+        final VersionedProcessGroup localNested = new VersionedProcessGroup();
+        localNested.setIdentifier(nestedPgIdentifier);
+        localNested.setVersionedFlowCoordinates(createVersionedFlowCoordinates());
+        localRoot.getProcessGroups().add(localNested);
+
+        final VersionedProcessor registryProcessor = new VersionedProcessor();
+        registryProcessor.setIdentifier(procIdentifier);
+        registryProcessor.setScheduledState(ScheduledState.ENABLED);
+        registryProcessor.setProperties(Collections.emptyMap());
+        registryProcessor.setPropertyDescriptors(Collections.emptyMap());
+        registryNested.getProcessors().add(registryProcessor);
+
+        final VersionedProcessor localProcessor = new VersionedProcessor();
+        localProcessor.setIdentifier(procIdentifier);
+        localProcessor.setScheduledState(ScheduledState.DISABLED);
+        localProcessor.setProperties(Collections.emptyMap());
+        localProcessor.setPropertyDescriptors(Collections.emptyMap());
+        localNested.getProcessors().add(localProcessor);
+
+        final ComparableDataFlow registryFlow = new StandardComparableDataFlow("registry", registryRoot);
+        final ComparableDataFlow localFlow = new StandardComparableDataFlow("local", localRoot);
+
+        final StandardFlowComparator testComparator = new StandardFlowComparator(
+                registryFlow,
+                localFlow,
+                Collections.emptySet(),
+                new StaticDifferenceDescriptor(),
+                Function.identity(),
+                VersionedComponent::getIdentifier,
+                FlowComparatorVersionedStrategy.SHALLOW);
+
+        final Set<FlowDifference> differences = testComparator.compare().getDifferences();
+
+        final boolean scheduledStateDiffFound = differences.stream()
+                .anyMatch(diff -> diff.getDifferenceType() == DifferenceType.SCHEDULED_STATE_CHANGED
+                        && diff.getComponentB() != null
+                        && procIdentifier.equals(diff.getComponentB().getIdentifier()));
+
+        assertTrue(scheduledStateDiffFound, "Expected scheduled state change for processor inside nested process group to be detected");
+    }
+
     private VersionedParameter createParameter(final String name, final String value, final boolean sensitive) {
         return createParameter(name, value, sensitive, null);
     }
@@ -194,5 +361,14 @@ public class TestStandardFlowComparator {
         asset.setIdentifier(id);
         asset.setName(name);
         return asset;
+    }
+
+    private VersionedFlowCoordinates createVersionedFlowCoordinates() {
+        final VersionedFlowCoordinates coordinates = new VersionedFlowCoordinates();
+        coordinates.setRegistryId("registry");
+        coordinates.setBucketId("bucketId");
+        coordinates.setFlowId("flowId");
+        coordinates.setVersion("1");
+        return coordinates;
     }
 }

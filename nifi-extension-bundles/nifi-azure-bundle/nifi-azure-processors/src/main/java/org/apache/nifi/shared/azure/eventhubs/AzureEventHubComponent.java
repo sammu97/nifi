@@ -28,12 +28,19 @@ import org.apache.nifi.proxy.ProxySpec;
 public interface AzureEventHubComponent {
     PropertyDescriptor TRANSPORT_TYPE = new PropertyDescriptor.Builder()
             .name("Transport Type")
-            .displayName("Transport Type")
             .description("Advanced Message Queuing Protocol Transport Type for communication with Azure Event Hubs")
             .allowableValues(AzureEventHubTransportType.class)
             .defaultValue(AzureEventHubTransportType.AMQP)
             .required(true)
             .addValidator(StandardValidators.NON_BLANK_VALIDATOR)
+            .expressionLanguageSupported(ExpressionLanguageScope.NONE)
+            .build();
+    PropertyDescriptor AUTHENTICATION_STRATEGY = new PropertyDescriptor.Builder()
+            .name("Authentication Strategy")
+            .description("Specifies the strategy used for authenticating to Azure Event Hubs")
+            .allowableValues(AzureEventHubAuthenticationStrategy.class)
+            .defaultValue(AzureEventHubAuthenticationStrategy.MANAGED_IDENTITY.getValue())
+            .required(true)
             .expressionLanguageSupported(ExpressionLanguageScope.NONE)
             .build();
     ProxySpec[] PROXY_SPECS = {ProxySpec.HTTP, ProxySpec.HTTP_AUTH};

@@ -56,6 +56,8 @@ import java.util.Map;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.lenient;
@@ -140,7 +142,7 @@ class JWTBearerOAuth2AccessTokenProviderTest {
         final List<ConfigVerificationResult> configVerifResults = runner.verify(provider, Map.of());
 
         // all configuration results should be successful
-        assertTrue(configVerifResults.size() > 0);
+        assertFalse(configVerifResults.isEmpty());
         assertEquals(0, configVerifResults.stream().filter(result -> !result.getOutcome().equals(Outcome.SUCCESSFUL)).count());
 
         // Validate the claims are properly set
@@ -169,6 +171,24 @@ class JWTBearerOAuth2AccessTokenProviderTest {
         assertEquals("clientSecret", formParams.get("clientSecret"));
         assertEquals("urn:ietf:params:oauth:grant-type:jwt-bearer", formParams.get("grant_type"));
         assertEquals(4, formParams.size());
+    }
+
+    @Test
+    void testJtiClaimIsUniqueWhenUuidIsUsed() throws Exception {
+        setPrivateKeyMock(RSAPrivateKey.class);
+
+        runner.setProperty(provider, JWTBearerOAuth2AccessTokenProvider.JTI, "${UUID()}");
+
+        runner.enableControllerService(provider);
+
+        // generate 2 JWTs using getAccessDetails() method and then access the claims via the test controller service
+        provider.getAccessDetails();
+        JWTClaimsSet claimsSet1 = provider.getJwtClaimsSet();
+        provider.getAccessDetails();
+        JWTClaimsSet claimsSet2 = provider.getJwtClaimsSet();
+
+        // assert that the 'jti' claims are different in the 2 JWTs
+        assertNotEquals(claimsSet1.getJWTID(), claimsSet2.getJWTID());
     }
 
     @Test

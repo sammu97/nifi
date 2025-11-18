@@ -35,9 +35,12 @@ import org.apache.nifi.web.api.dto.VersionControlInformationDTO;
 import org.apache.nifi.web.api.entity.FlowRegistryClientEntity;
 import org.apache.nifi.web.api.entity.FlowRegistryClientsEntity;
 import org.apache.nifi.web.api.entity.ProcessGroupEntity;
+import org.apache.nifi.web.api.entity.VersionedFlowSnapshotMetadataSetEntity;
 
 import java.io.File;
 import java.io.IOException;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.Properties;
 import java.util.Set;
 
@@ -54,16 +57,20 @@ public class PGImport extends AbstractNiFiCommand<StringResult> {
 
     @Override
     public String getDescription() {
-        return "Creates a new process group by importing a versioned flow from a registry. If no process group id is " +
-                "specified, then the created process group will be placed in the root group. If only one registry client " +
-                "exists in NiFi, then it does not need to be specified and will be automatically selected. The x and y " +
-                "coordinates for the position of the imported process group may be optionally specified. If left blank, " +
-                "the position will automatically be selected to avoid overlapping with existing process groups.";
+        return "Creates a new process group by importing a versioned flow from a registry or using a local file. "
+                + "If no process group ID is specified, then the created process group will be placed in the root group. "
+                + "If using import from a registry and no version is specified, then the latest will be used. "
+                + "If only one registry client exists in NiFi, then it does not need to be specified and will be "
+                + "automatically selected. The x and y coordinates for the position of the imported process group may be "
+                + "optionally specified. If left blank, the position will automatically be selected to avoid overlapping "
+                + "with existing process groups. If a process group name is specified, the imported process group will be "
+                + "renamed with the specified name.";
     }
 
     @Override
     protected void doInitialize(Context context) {
         addOption(CommandOption.PG_ID.createOption());
+        addOption(CommandOption.PG_NAME.createOption());
         addOption(CommandOption.INPUT_SOURCE.createOption());
         addOption(CommandOption.REGISTRY_CLIENT_ID.createOption());
         addOption(CommandOption.BUCKET_ID.createOption());
@@ -84,7 +91,7 @@ public class PGImport extends AbstractNiFiCommand<StringResult> {
 
         final String bucketId = getArg(properties, CommandOption.BUCKET_ID);
         final String flowId = getArg(properties, CommandOption.FLOW_ID);
-        final String flowVersion = getArg(properties, CommandOption.FLOW_VERSION);
+        String flowVersion = getArg(properties, CommandOption.FLOW_VERSION);
         final String flowBranch = getArg(properties, CommandOption.FLOW_BRANCH);
 
         final String posXStr = getArg(properties, CommandOption.POS_X);
@@ -102,9 +109,6 @@ public class PGImport extends AbstractNiFiCommand<StringResult> {
             }
             if (StringUtils.isBlank(flowId)) {
                 throw new IllegalArgumentException("Input path is not specified so Flow ID must be specified");
-            }
-            if (StringUtils.isBlank(flowVersion)) {
-                throw new IllegalArgumentException("Input path is not specified so Flow Version must be specified");
             }
         } else {
             if (!input.exists() || !input.isFile() || !input.canRead()) {
@@ -180,6 +184,15 @@ public class PGImport extends AbstractNiFiCommand<StringResult> {
                 }
             }
 
+            if (flowVersion == null) {
+                final VersionedFlowSnapshotMetadataSetEntity flowVersions = client.getFlowClient().getVersions(registryId, bucketId, flowId, flowBranch);
+                flowVersion = Collections.max(
+                        flowVersions.getVersionedFlowSnapshotMetadataSet(),
+                        Comparator.comparingLong(e -> e.getVersionedFlowSnapshotMetadata().getTimestamp()))
+                        .getVersionedFlowSnapshotMetadata()
+                        .getVersion();
+            }
+
             final VersionControlInformationDTO versionControlInfo = new VersionControlInformationDTO();
             versionControlInfo.setRegistryId(registryId);
             versionControlInfo.setBucketId(bucketId);
@@ -205,6 +218,12 @@ public class PGImport extends AbstractNiFiCommand<StringResult> {
             JsonNode flowContentsNode = rootNode.path("flowContents");
             String pgName = flowContentsNode.path("name").asText();
             createdEntity = pgClient.upload(parentPgId, input, pgName, posDto.getX(), posDto.getY());
+        }
+
+        final String pgName = getArg(properties, CommandOption.PG_NAME);
+        if (StringUtils.isNotBlank(pgName)) {
+            final PGRename pgRename = new PGRename();
+            pgRename.rename(pgName, pgClient, createdEntity);
         }
 
         return new StringResult(createdEntity.getId(), getContext().isInteractive());

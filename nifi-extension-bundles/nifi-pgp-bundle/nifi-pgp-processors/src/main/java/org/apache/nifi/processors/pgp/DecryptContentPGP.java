@@ -17,6 +17,8 @@
 package org.apache.nifi.processors.pgp;
 
 import org.apache.nifi.annotation.behavior.InputRequirement;
+import org.apache.nifi.annotation.behavior.SideEffectFree;
+import org.apache.nifi.annotation.behavior.SupportsBatching;
 import org.apache.nifi.annotation.behavior.WritesAttribute;
 import org.apache.nifi.annotation.behavior.WritesAttributes;
 import org.apache.nifi.annotation.documentation.CapabilityDescription;
@@ -28,6 +30,7 @@ import org.apache.nifi.components.PropertyValue;
 import org.apache.nifi.components.ValidationContext;
 import org.apache.nifi.components.ValidationResult;
 import org.apache.nifi.flowfile.FlowFile;
+import org.apache.nifi.migration.PropertyConfiguration;
 import org.apache.nifi.pgp.service.api.PGPPrivateKeyService;
 import org.apache.nifi.processor.AbstractProcessor;
 import org.apache.nifi.processor.ProcessContext;
@@ -77,6 +80,8 @@ import java.util.Set;
 /**
  * Decrypt Content using Open Pretty Good Privacy decryption methods
  */
+@SideEffectFree
+@SupportsBatching
 @InputRequirement(InputRequirement.Requirement.INPUT_REQUIRED)
 @Tags({"PGP", "GPG", "OpenPGP", "Encryption", "RFC 4880"})
 @CapabilityDescription("Decrypt contents of OpenPGP messages. Using the Packaged Decryption Strategy preserves OpenPGP encoding to support subsequent signature verification.")
@@ -100,8 +105,7 @@ public class DecryptContentPGP extends AbstractProcessor {
             .build();
 
     public static final PropertyDescriptor DECRYPTION_STRATEGY = new PropertyDescriptor.Builder()
-            .name("decryption-strategy")
-            .displayName("Decryption Strategy")
+            .name("Decryption Strategy")
             .description("Strategy for writing files to success after decryption")
             .required(true)
             .defaultValue(DecryptionStrategy.DECRYPTED.name())
@@ -113,16 +117,14 @@ public class DecryptContentPGP extends AbstractProcessor {
             .build();
 
     public static final PropertyDescriptor PASSPHRASE = new PropertyDescriptor.Builder()
-            .name("passphrase")
-            .displayName("Passphrase")
+            .name("Passphrase")
             .description("Passphrase used for decrypting data encrypted with Password-Based Encryption")
             .sensitive(true)
             .addValidator(StandardValidators.NON_EMPTY_VALIDATOR)
             .build();
 
     public static final PropertyDescriptor PRIVATE_KEY_SERVICE = new PropertyDescriptor.Builder()
-            .name("private-key-service")
-            .displayName("Private Key Service")
+            .name("Private Key Service")
             .description("PGP Private Key Service for decrypting data encrypted with Public Key Encryption")
             .identifiesControllerService(PGPPrivateKeyService.class)
             .build();
@@ -188,6 +190,13 @@ public class DecryptContentPGP extends AbstractProcessor {
             getLogger().error("Decryption Failed {}", flowFile, e);
             session.transfer(flowFile, FAILURE);
         }
+    }
+
+    @Override
+    public void migrateProperties(PropertyConfiguration config) {
+        config.renameProperty("decryption-strategy", DECRYPTION_STRATEGY.getName());
+        config.renameProperty("passphrase", PASSPHRASE.getName());
+        config.renameProperty("private-key-service", PRIVATE_KEY_SERVICE.getName());
     }
 
     /**
@@ -359,8 +368,7 @@ public class DecryptContentPGP extends AbstractProcessor {
             PGPLiteralData literalData = null;
 
             for (final Object object : objectFactory) {
-                if (object instanceof PGPCompressedData) {
-                    final PGPCompressedData compressedData = (PGPCompressedData) object;
+                if (object instanceof PGPCompressedData compressedData) {
                     getLogger().debug("PGP Compressed Data Algorithm [{}] Found", compressedData.getAlgorithm());
                     final PGPObjectFactory compressedObjectFactory = new JcaPGPObjectFactory(compressedData.getDataStream());
                     literalData = getLiteralData(compressedObjectFactory);

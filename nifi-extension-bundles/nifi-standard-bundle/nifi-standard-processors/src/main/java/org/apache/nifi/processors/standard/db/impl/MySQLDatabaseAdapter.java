@@ -80,8 +80,8 @@ public class MySQLDatabaseAdapter extends GenericDatabaseAdapter {
                 .collect(Collectors.joining(", "));
 
         List<String> updateValues = new ArrayList<>();
-        for (int i = 0; i < columnNames.size(); i++) {
-            updateValues.add(columnNames.get(i) + " = ?");
+        for (String columnName : columnNames) {
+            updateValues.add(columnName + " = ?");
         }
         String parameterizedUpdateValues = String.join(", ", updateValues);
 
@@ -148,22 +148,10 @@ public class MySQLDatabaseAdapter extends GenericDatabaseAdapter {
 
     @Override
     public String getSQLForDataType(int sqlType) {
-        switch (sqlType) {
-            case Types.DOUBLE:
-                return "DOUBLE PRECISION";
-            case CHAR:
-            case LONGNVARCHAR:
-            case LONGVARCHAR:
-            case NCHAR:
-            case NVARCHAR:
-            case VARCHAR:
-            case CLOB:
-            case NCLOB:
-            case OTHER:
-            case SQLXML:
-                return "TEXT";
-            default:
-                return JDBCType.valueOf(sqlType).getName();
-        }
+        return switch (sqlType) {
+            case Types.DOUBLE -> "DOUBLE PRECISION";
+            case CHAR, LONGNVARCHAR, LONGVARCHAR, NCHAR, NVARCHAR, VARCHAR, CLOB, NCLOB, OTHER, SQLXML -> "TEXT";
+            default -> JDBCType.valueOf(sqlType).getName();
+        };
     }
 }

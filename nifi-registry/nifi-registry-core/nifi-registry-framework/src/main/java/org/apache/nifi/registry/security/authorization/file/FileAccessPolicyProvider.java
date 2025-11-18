@@ -199,7 +199,8 @@ public class FileAccessPolicyProvider extends AbstractConfigurableAccessPolicyPr
 
     @Override
     public AccessPolicy getAccessPolicy(String resourceIdentifier, RequestAction action) throws AuthorizationAccessException {
-        return authorizationsHolder.get().getAccessPolicy(resourceIdentifier, action);
+        return AccessPolicyProviderUtils.getAccessPolicy(
+                resourceIdentifier, action, authorizationsHolder.get().getPoliciesByResource());
     }
 
     @Override
@@ -591,29 +592,20 @@ public class FileAccessPolicyProvider extends AbstractConfigurableAccessPolicyPr
     }
 
     private String getActionCode(final RequestAction action) {
-        switch (action) {
-            case READ:
-                return READ_CODE;
-            case WRITE:
-                return WRITE_CODE;
-            case DELETE:
-                return DELETE_CODE;
-            default:
-                throw new IllegalStateException("Unknown action: " + action);
-        }
+        return switch (action) {
+            case READ -> READ_CODE;
+            case WRITE -> WRITE_CODE;
+            case DELETE -> DELETE_CODE;
+        };
     }
 
     private RequestAction getAction(final String actionCode) {
-        switch (actionCode) {
-            case READ_CODE:
-                return RequestAction.READ;
-            case WRITE_CODE:
-                return RequestAction.WRITE;
-            case DELETE_CODE:
-                return RequestAction.DELETE;
-            default:
-                throw new IllegalStateException("Unknown action: " + actionCode);
-        }
+        return switch (actionCode) {
+            case READ_CODE -> RequestAction.READ;
+            case WRITE_CODE -> RequestAction.WRITE;
+            case DELETE_CODE -> RequestAction.DELETE;
+            default -> throw new IllegalStateException("Unknown action: " + actionCode);
+        };
     }
 
     /**

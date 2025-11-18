@@ -16,10 +16,10 @@
  */
 package org.apache.nifi.processors.standard;
 
-import okhttp3.mockwebserver.MockResponse;
-import okhttp3.mockwebserver.MockWebServer;
-import okhttp3.mockwebserver.RecordedRequest;
-import okio.Buffer;
+import mockwebserver3.MockResponse;
+import mockwebserver3.MockWebServer;
+import mockwebserver3.RecordedRequest;
+import okio.ByteString;
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang3.StringUtils;
@@ -62,6 +62,7 @@ import javax.net.ssl.SSLSocketFactory;
 import javax.net.ssl.X509ExtendedTrustManager;
 import javax.security.auth.x500.X500Principal;
 
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.net.Proxy;
 import java.net.URI;
@@ -151,6 +152,8 @@ public class InvokeHTTPTest {
 
     private static final String TLS_CONNECTION_TIMEOUT = "60 s";
 
+    private static final String EMPTY_HEADER_NAME = "";
+
     private static SSLContext sslContext;
 
     private static SSLContext trustStoreSslContext;
@@ -196,16 +199,18 @@ public class InvokeHTTPTest {
     }
 
     @BeforeEach
-    public void setRunner() {
+    public void setRunner() throws IOException {
         mockWebServer = new MockWebServer();
+        mockWebServer.start();
+
         runner = TestRunners.newTestRunner(new InvokeHTTP());
         // Disable Connection Pooling
         runner.setProperty(InvokeHTTP.SOCKET_IDLE_CONNECTIONS, Integer.toString(0));
     }
 
     @AfterEach
-    public void shutdownServer() throws IOException {
-        mockWebServer.shutdown();
+    public void shutdownServer() {
+        mockWebServer.close();
     }
 
     @Test
@@ -327,7 +332,10 @@ public class InvokeHTTPTest {
         setUrlProperty();
 
         final String body = String.class.getName();
-        mockWebServer.enqueue(new MockResponse().setResponseCode(HTTP_OK).setBody(body));
+        mockWebServer.enqueue(new MockResponse.Builder()
+                .code(HTTP_OK)
+                .body(body)
+                .build());
         runner.enqueue(FLOW_FILE_CONTENT);
         runner.run();
 
@@ -346,7 +354,10 @@ public class InvokeHTTPTest {
         runner.setNonLoopConnection(false);
 
         final String body = String.class.getName();
-        mockWebServer.enqueue(new MockResponse().setResponseCode(HTTP_OK).setBody(body));
+        mockWebServer.enqueue(new MockResponse.Builder()
+                .code(HTTP_OK)
+                .body(body)
+                .build());
         runner.run();
 
         assertRelationshipStatusCodeEquals(InvokeHTTP.ORIGINAL, HTTP_OK);
@@ -361,7 +372,9 @@ public class InvokeHTTPTest {
         runner.setNonLoopConnection(false);
         setUrlProperty();
 
-        mockWebServer.enqueue(new MockResponse().setResponseCode(HTTP_OK));
+        mockWebServer.enqueue(new MockResponse.Builder()
+                .code(HTTP_OK)
+                .build());
         runner.run();
 
         assertRelationshipStatusCodeEquals(InvokeHTTP.RESPONSE, HTTP_OK);
@@ -388,7 +401,9 @@ public class InvokeHTTPTest {
         runner.setProperty(InvokeHTTP.HTTP_URL, mockWebServerUrl);
         runner.setProperty(ProxyConfigurationService.PROXY_CONFIGURATION_SERVICE, proxyConfigurationServiceId);
 
-        mockWebServer.enqueue(new MockResponse().setResponseCode(HTTP_OK));
+        mockWebServer.enqueue(new MockResponse.Builder()
+                .code(HTTP_OK)
+                .build());
         runner.enqueue(FLOW_FILE_CONTENT);
         runner.run();
 
@@ -402,7 +417,10 @@ public class InvokeHTTPTest {
 
     @Test
     public void testRunGetHttp200SuccessContentTypeHeaderMimeType() {
-        final MockResponse response = new MockResponse().setResponseCode(HTTP_OK).setHeader(CONTENT_TYPE_HEADER, TEXT_PLAIN);
+        final MockResponse response = new MockResponse.Builder()
+                .code(HTTP_OK)
+                .addHeader(CONTENT_TYPE_HEADER, TEXT_PLAIN)
+                .build();
         mockWebServer.enqueue(response);
 
         setUrlProperty();
@@ -417,6 +435,27 @@ public class InvokeHTTPTest {
     }
 
     @Test
+    public void testRunGetHttp200SuccessEmptyHeaderName() {
+        final MockResponse response = new MockResponse.Builder()
+                .code(HTTP_OK)
+                .addHeaderLenient(EMPTY_HEADER_NAME, TEXT_PLAIN)
+                .build();
+        mockWebServer.enqueue(response);
+
+        setUrlProperty();
+        runner.enqueue(FLOW_FILE_CONTENT);
+        runner.run();
+
+        assertResponseSuccessRelationships();
+        assertRelationshipStatusCodeEquals(InvokeHTTP.RESPONSE, HTTP_OK);
+
+        final MockFlowFile responseFlowFile = getResponseFlowFile();
+        final Map<String, String> attributes = responseFlowFile.getAttributes();
+        assertFalse(attributes.isEmpty());
+        assertFalse(attributes.containsKey(EMPTY_HEADER_NAME), "Empty Attribute Name found");
+    }
+
+    @Test
     public void testRunGetHttp200SuccessRequestDateHeader() throws InterruptedException {
         runner.setProperty(InvokeHTTP.REQUEST_DATE_HEADER_ENABLED, StringUtils.capitalize(Boolean.TRUE.toString()));
 
@@ -426,7 +465,7 @@ public class InvokeHTTPTest {
         assertRelationshipStatusCodeEquals(InvokeHTTP.RESPONSE, HTTP_OK);
 
         final RecordedRequest request = takeRequestCompleted();
-        final String dateHeader = request.getHeader(DATE_HEADER);
+        final String dateHeader = request.getHeaders().get(DATE_HEADER);
         assertNotNull(dateHeader, "Request Date not found");
 
         final Pattern rfcDatePattern = Pattern.compile("^.+? \\d{4} \\d{2}:\\d{2}:\\d{2} GMT$");
@@ -442,7 +481,9 @@ public class InvokeHTTPTest {
         final String defaultContentTypeHeader = "Default-Content-Type";
         runner.setProperty(defaultContentTypeHeader, InvokeHTTP.DEFAULT_CONTENT_TYPE);
         setUrlProperty();
-        mockWebServer.enqueue(new MockResponse().setResponseCode(HTTP_OK));
+        mockWebServer.enqueue(new MockResponse.Builder()
+                .code(HTTP_OK)
+                .build());
 
         final Map<String, String> attributes = new HashMap<>();
         attributes.put(ACCEPT_HEADER, TEXT_PLAIN);
@@ -453,21 +494,23 @@ public class InvokeHTTPTest {
         assertRelationshipStatusCodeEquals(InvokeHTTP.RESPONSE, HTTP_OK);
 
         final RecordedRequest request = takeRequestCompleted();
-        final String acceptHeader = request.getHeader(ACCEPT_HEADER);
+        final String acceptHeader = request.getHeaders().get(ACCEPT_HEADER);
         assertEquals(TEXT_PLAIN, acceptHeader);
 
-        final String contentType = request.getHeader(defaultContentTypeHeader);
+        final String contentType = request.getHeaders().get(defaultContentTypeHeader);
         assertEquals(InvokeHTTP.DEFAULT_CONTENT_TYPE, contentType);
 
         runner.removeProperty(InvokeHTTP.REQUEST_HEADER_ATTRIBUTES_PATTERN);
         runner.removeProperty(defaultContentTypeHeader);
-        mockWebServer.enqueue(new MockResponse().setResponseCode(HTTP_OK));
+        mockWebServer.enqueue(new MockResponse.Builder()
+                .code(HTTP_OK)
+                .build());
         runner.enqueue(FLOW_FILE_CONTENT, attributes);
         runner.run();
 
         final RecordedRequest secondRequest = takeRequestCompleted();
-        assertNull(secondRequest.getHeader(ACCEPT_HEADER), "Accept Header found");
-        assertNull(secondRequest.getHeader(defaultContentTypeHeader), "Default-Content-Type Header found");
+        assertNull(secondRequest.getHeaders().get(ACCEPT_HEADER), "Accept Header found");
+        assertNull(secondRequest.getHeaders().get(defaultContentTypeHeader), "Default-Content-Type Header found");
     }
 
     @Test
@@ -479,10 +522,11 @@ public class InvokeHTTPTest {
 
         final String firstHeader = String.class.getSimpleName();
         final String secondHeader = Integer.class.getSimpleName();
-        final MockResponse response = new MockResponse()
-                .setResponseCode(HTTP_OK)
+        final MockResponse response = new MockResponse.Builder()
+                .code(HTTP_OK)
                 .addHeader(REPEATED_HEADER, firstHeader)
-                .addHeader(REPEATED_HEADER, secondHeader);
+                .addHeader(REPEATED_HEADER, secondHeader)
+                .build();
 
         mockWebServer.enqueue(response);
         runner.enqueue(FLOW_FILE_CONTENT);
@@ -525,7 +569,7 @@ public class InvokeHTTPTest {
         assertRelationshipStatusCodeEquals(InvokeHTTP.RESPONSE, HTTP_OK);
 
         final RecordedRequest request = takeRequestCompleted();
-        final String authorization = request.getHeader(AUTHORIZATION_HEADER);
+        final String authorization = request.getHeaders().get(AUTHORIZATION_HEADER);
         assertNotNull(authorization, "Authorization Header not found");
 
         final Pattern basicAuthPattern = Pattern.compile("^Basic \\S+$");
@@ -542,17 +586,20 @@ public class InvokeHTTPTest {
         final String nonce = UUID.randomUUID().toString();
         final String digestHeader = String.format("Digest realm=\"%s\", nonce=\"%s\"", realm, nonce);
 
-        mockWebServer.enqueue(new MockResponse().setResponseCode(HTTP_UNAUTHORIZED).setHeader(AUTHENTICATE_HEADER, digestHeader));
+        mockWebServer.enqueue(new MockResponse.Builder()
+                .code(HTTP_UNAUTHORIZED)
+                .addHeader(AUTHENTICATE_HEADER, digestHeader)
+                .build());
         enqueueResponseCodeAndRun(HTTP_OK);
 
         assertResponseSuccessRelationships();
         assertRelationshipStatusCodeEquals(InvokeHTTP.RESPONSE, HTTP_OK);
 
         final RecordedRequest request = takeRequestCompleted();
-        assertNull(request.getHeader(AUTHORIZATION_HEADER), "Authorization Header found");
+        assertNull(request.getHeaders().get(AUTHORIZATION_HEADER), "Authorization Header found");
 
         final RecordedRequest authenticatedRequest = takeRequestCompleted();
-        final String authorization = authenticatedRequest.getHeader(AUTHORIZATION_HEADER);
+        final String authorization = authenticatedRequest.getHeaders().get(AUTHORIZATION_HEADER);
         assertNotNull(authorization, "Authorization Header not found");
         assertTrue(authorization.contains(realm), "Digest Realm not found");
         assertTrue(authorization.contains(nonce), "Digest Nonce not found");
@@ -595,7 +642,7 @@ public class InvokeHTTPTest {
         assertRelationshipStatusCodeEquals(InvokeHTTP.RESPONSE, HTTP_OK);
 
         final RecordedRequest request = takeRequestCompleted();
-        final String userAgentHeader = request.getHeader(USER_AGENT_HEADER);
+        final String userAgentHeader = request.getHeaders().get(USER_AGENT_HEADER);
         assertEquals(userAgent, userAgentHeader);
     }
 
@@ -606,7 +653,9 @@ public class InvokeHTTPTest {
         final String encodedUrl = URLValidator.createURL(nonEncodedUrl).toExternalForm();
 
         runner.setProperty(InvokeHTTP.HTTP_URL, nonEncodedUrl);
-        mockWebServer.enqueue(new MockResponse().setResponseCode(HTTP_OK));
+        mockWebServer.enqueue(new MockResponse.Builder()
+                .code(HTTP_OK)
+                .build());
         runner.enqueue(FLOW_FILE_CONTENT);
         runner.run();
 
@@ -630,7 +679,10 @@ public class InvokeHTTPTest {
 
     @Test
     public void testRunGetHttp302NoRetryResponseRedirectsDefaultEnabled() {
-        mockWebServer.enqueue(new MockResponse().setResponseCode(HTTP_MOVED_TEMP).setHeader(LOCATION_HEADER, getMockWebServerUrl()));
+        mockWebServer.enqueue(new MockResponse.Builder()
+                .code(HTTP_MOVED_TEMP)
+                .addHeader(LOCATION_HEADER, getMockWebServerUrl())
+                .build());
         enqueueResponseCodeAndRun(HTTP_OK);
 
         runner.assertTransferCount(InvokeHTTP.FAILURE, 0);
@@ -651,18 +703,20 @@ public class InvokeHTTPTest {
     @Test
     public void testRunGetHttp302CookieStrategyAcceptAll() throws InterruptedException {
         runner.setProperty(InvokeHTTP.RESPONSE_COOKIE_STRATEGY, CookieStrategy.ACCEPT_ALL.name());
-        mockWebServer.enqueue(new MockResponse().setResponseCode(HTTP_MOVED_TEMP)
-            .addHeader(SET_COOKIE_HEADER, COOKIE_1)
-            .addHeader(SET_COOKIE_HEADER, COOKIE_2)
-            .addHeader(LOCATION_HEADER, getMockWebServerUrl()));
+        mockWebServer.enqueue(new MockResponse.Builder()
+                .code(HTTP_MOVED_TEMP)
+                .addHeader(SET_COOKIE_HEADER, COOKIE_1)
+                .addHeader(SET_COOKIE_HEADER, COOKIE_2)
+                .addHeader(LOCATION_HEADER, getMockWebServerUrl())
+                .build());
         enqueueResponseCodeAndRun(HTTP_OK);
 
         RecordedRequest request1 = mockWebServer.takeRequest();
-        assertNull(request1.getHeader(COOKIE_HEADER));
+        assertNull(request1.getHeaders().get(COOKIE_HEADER));
 
         RecordedRequest request2 = mockWebServer.takeRequest();
         final String expectedHeader = String.format("%s; %s", COOKIE_1, COOKIE_2);
-        assertEquals(expectedHeader, request2.getHeader(COOKIE_HEADER));
+        assertEquals(expectedHeader, request2.getHeaders().get(COOKIE_HEADER));
 
         runner.assertTransferCount(InvokeHTTP.FAILURE, 0);
         runner.assertTransferCount(InvokeHTTP.NO_RETRY, 0);
@@ -671,17 +725,19 @@ public class InvokeHTTPTest {
 
     @Test
     public void testRunGetHttp302CookieStrategyDefaultDisabled() throws InterruptedException {
-        mockWebServer.enqueue(new MockResponse().setResponseCode(HTTP_MOVED_TEMP)
-            .addHeader(SET_COOKIE_HEADER, COOKIE_1)
-            .addHeader(SET_COOKIE_HEADER, COOKIE_2)
-            .addHeader(LOCATION_HEADER, getMockWebServerUrl()));
+        mockWebServer.enqueue(new MockResponse.Builder()
+                .code(HTTP_MOVED_TEMP)
+                .addHeader(SET_COOKIE_HEADER, COOKIE_1)
+                .addHeader(SET_COOKIE_HEADER, COOKIE_2)
+                .addHeader(LOCATION_HEADER, getMockWebServerUrl())
+                .build());
         enqueueResponseCodeAndRun(HTTP_OK);
 
         RecordedRequest request1 = mockWebServer.takeRequest();
-        assertNull(request1.getHeader(COOKIE_HEADER));
+        assertNull(request1.getHeaders().get(COOKIE_HEADER));
 
         RecordedRequest request2 = mockWebServer.takeRequest();
-        assertNull(request2.getHeader(COOKIE_HEADER));
+        assertNull(request2.getHeaders().get(COOKIE_HEADER));
 
         runner.assertTransferCount(InvokeHTTP.FAILURE, 0);
         runner.assertTransferCount(InvokeHTTP.NO_RETRY, 0);
@@ -771,14 +827,16 @@ public class InvokeHTTPTest {
         assertRelationshipStatusCodeEquals(InvokeHTTP.RESPONSE, HTTP_OK);
 
         final RecordedRequest request = takeRequestCompleted();
-        final String contentLength = request.getHeader(CONTENT_LENGTH_HEADER);
+        final String contentLength = request.getHeaders().get(CONTENT_LENGTH_HEADER);
         assertNull(contentLength, "Content-Length Request Header found");
 
-        final String contentEncoding = request.getHeader(CONTENT_ENCODING_HEADER);
+        final String contentEncoding = request.getHeaders().get(CONTENT_ENCODING_HEADER);
         assertEquals(ContentEncodingStrategy.GZIP.getValue().toLowerCase(), contentEncoding);
 
-        final Buffer body = request.getBody();
-        try (final GZIPInputStream gzipInputStream = new GZIPInputStream(body.inputStream())) {
+        final ByteString requestBody = request.getBody();
+        assertNotNull(requestBody);
+        final byte[] body = requestBody.toByteArray();
+        try (final GZIPInputStream gzipInputStream = new GZIPInputStream(new ByteArrayInputStream(body))) {
             final String decompressed = IOUtils.toString(gzipInputStream, StandardCharsets.UTF_8);
             assertEquals(FLOW_FILE_CONTENT, decompressed);
         }
@@ -795,10 +853,10 @@ public class InvokeHTTPTest {
         assertRelationshipStatusCodeEquals(InvokeHTTP.RESPONSE, HTTP_OK);
 
         final RecordedRequest request = takeRequestCompleted();
-        final String contentLength = request.getHeader(CONTENT_LENGTH_HEADER);
+        final String contentLength = request.getHeaders().get(CONTENT_LENGTH_HEADER);
         assertNull(contentLength, "Content-Length Request Header found");
 
-        final String transferEncoding = request.getHeader(TRANSFER_ENCODING_HEADER);
+        final String transferEncoding = request.getHeaders().get(TRANSFER_ENCODING_HEADER);
         assertEquals("chunked", transferEncoding);
     }
 
@@ -815,7 +873,9 @@ public class InvokeHTTPTest {
         runner.setProperty(formDataPropertyName, formDataParameter);
 
         setUrlProperty();
-        mockWebServer.enqueue(new MockResponse().setResponseCode(HTTP_OK));
+        mockWebServer.enqueue(new MockResponse.Builder()
+                .code(HTTP_OK)
+                .build());
         runner.enqueue(FLOW_FILE_CONTENT);
         runner.run();
 
@@ -823,13 +883,15 @@ public class InvokeHTTPTest {
         assertRelationshipStatusCodeEquals(InvokeHTTP.RESPONSE, HTTP_OK);
 
         final RecordedRequest request = takeRequestCompleted();
-        final String contentType = request.getHeader(CONTENT_TYPE_HEADER);
+        final String contentType = request.getHeaders().get(CONTENT_TYPE_HEADER);
         assertNotNull(contentType, "Content Type not found");
 
         final Pattern multipartPattern = Pattern.compile("^multipart/form-data.+$");
         assertTrue(multipartPattern.matcher(contentType).matches(), "Content Type not matched");
 
-        final String body = request.getBody().readUtf8();
+        final ByteString requestBody = request.getBody();
+        assertNotNull(requestBody);
+        final String body = requestBody.utf8();
         assertTrue(body.contains(formDataParameter), "Form Data Parameter not found");
     }
 
@@ -852,7 +914,9 @@ public class InvokeHTTPTest {
         ffAttributes.put(CoreAttributes.FILENAME.key(), FLOW_FILE_INITIAL_FILENAME);
         runner.enqueue(FLOW_FILE_CONTENT, ffAttributes);
 
-        mockWebServer.enqueue(new MockResponse().setResponseCode(HTTP_OK));
+        mockWebServer.enqueue(new MockResponse.Builder()
+                .code(HTTP_OK)
+                .build());
 
         runner.run();
 
@@ -952,7 +1016,7 @@ public class InvokeHTTPTest {
 
         setUrlProperty();
 
-        mockWebServer.enqueue(new MockResponse());
+        mockWebServer.enqueue(new MockResponse.Builder().build());
 
         runner.setProperty(InvokeHTTP.REQUEST_OAUTH2_ACCESS_TOKEN_PROVIDER, oauth2AccessTokenProviderId);
         runner.enqueue("unimportant");
@@ -960,7 +1024,7 @@ public class InvokeHTTPTest {
 
         RecordedRequest recordedRequest = mockWebServer.takeRequest();
 
-        String actualAuthorizationHeader = recordedRequest.getHeader(HttpHeader.AUTHORIZATION.getHeader());
+        String actualAuthorizationHeader = recordedRequest.getHeaders().get(HttpHeader.AUTHORIZATION.getHeader());
         assertEquals("Bearer " + accessToken, actualAuthorizationHeader);
 
     }
@@ -983,7 +1047,7 @@ public class InvokeHTTPTest {
         enqueueResponseCodeAndRun(HTTP_UNAUTHORIZED);
 
         RecordedRequest recordedRequest = mockWebServer.takeRequest();
-        String actualAuthorizationHeader = recordedRequest.getHeader(HttpHeader.AUTHORIZATION.getHeader());
+        String actualAuthorizationHeader = recordedRequest.getHeaders().get(HttpHeader.AUTHORIZATION.getHeader());
         assertEquals("Bearer " + accessToken, actualAuthorizationHeader);
 
         assertRelationshipStatusCodeEquals(InvokeHTTP.NO_RETRY, HTTP_UNAUTHORIZED);
@@ -994,7 +1058,7 @@ public class InvokeHTTPTest {
         enqueueResponseCodeAndRun(HTTP_OK);
 
         recordedRequest = mockWebServer.takeRequest();
-        actualAuthorizationHeader = recordedRequest.getHeader(HttpHeader.AUTHORIZATION.getHeader());
+        actualAuthorizationHeader = recordedRequest.getHeaders().get(HttpHeader.AUTHORIZATION.getHeader());
         assertEquals("Bearer " + refreshedAccessToken, actualAuthorizationHeader);
 
         assertResponseSuccessRelationships();
@@ -1011,7 +1075,9 @@ public class InvokeHTTPTest {
 
     private void enqueueResponseCodeAndRun(final int responseCode) {
         setUrlProperty();
-        mockWebServer.enqueue(new MockResponse().setResponseCode(responseCode));
+        mockWebServer.enqueue(new MockResponse.Builder()
+                .code(responseCode)
+                .build());
         runner.enqueue(FLOW_FILE_CONTENT);
         runner.run();
     }
@@ -1113,6 +1179,6 @@ public class InvokeHTTPTest {
         if (sslSocketFactory == null) {
             throw new IllegalArgumentException("Socket Factory not found");
         }
-        mockWebServer.useHttps(sslSocketFactory, false);
+        mockWebServer.useHttps(sslSocketFactory);
     }
 }

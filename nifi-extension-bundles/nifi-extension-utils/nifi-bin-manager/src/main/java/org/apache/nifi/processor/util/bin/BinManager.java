@@ -57,9 +57,6 @@ public class BinManager {
 
     private int binCount = 0;   // guarded by read/write lock
 
-    public BinManager() {
-    }
-
     public void purge() {
         wLock.lock();
         try {
@@ -224,8 +221,8 @@ public class BinManager {
     /**
      * Finds all bins that are considered full and removes them from the manager.
      * <p/>
-     * @param relaxFullnessConstraint if false will require bins to be full before considered ready; if true bins only have to meet their minimum size criteria or be 'old' and then they'll be
-     * considered ready
+     * @param relaxFullnessConstraint if false will require bins to be full before considered ready; if true bins only have to meet their minimum size criteria. It does not affect the 'old' criteria,
+     *                                so bins that are older than maxBinAgeSeconds will always be considered ready regardless of this parameter.
      * @return bins that are considered full
      */
     public Collection<Bin> removeReadyBins(boolean relaxFullnessConstraint) {
@@ -243,7 +240,7 @@ public class BinManager {
                     } else if (!relaxFullnessConstraint && bin.isFull()) { //strict check
                         bin.setEvictionReason(bin.determineEvictionReason());
                         readyBins.add(bin);
-                    } else if (relaxFullnessConstraint && bin.isOlderThan(maxBinAgeSeconds.get(), TimeUnit.SECONDS)) {
+                    } else if (bin.isOlderThan(maxBinAgeSeconds.get(), TimeUnit.SECONDS)) {
                         bin.setEvictionReason(EvictionReason.TIMEOUT);
                         readyBins.add(bin);
                     } else { //it isn't time yet...

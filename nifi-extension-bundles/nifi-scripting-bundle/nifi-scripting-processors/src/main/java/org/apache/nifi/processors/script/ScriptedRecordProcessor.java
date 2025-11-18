@@ -22,6 +22,7 @@ import org.apache.nifi.components.PropertyDescriptor;
 import org.apache.nifi.components.ValidationContext;
 import org.apache.nifi.components.ValidationResult;
 import org.apache.nifi.flowfile.FlowFile;
+import org.apache.nifi.migration.PropertyConfiguration;
 import org.apache.nifi.processor.AbstractProcessor;
 import org.apache.nifi.processor.ProcessContext;
 import org.apache.nifi.processor.exception.ProcessException;
@@ -57,7 +58,6 @@ abstract class ScriptedRecordProcessor extends AbstractProcessor implements Sear
 
     static final PropertyDescriptor RECORD_READER = new PropertyDescriptor.Builder()
             .name("Record Reader")
-            .displayName("Record Reader")
             .description("The Record Reader to use parsing the incoming FlowFile into Records")
             .required(true)
             .identifiesControllerService(RecordReaderFactory.class)
@@ -65,15 +65,13 @@ abstract class ScriptedRecordProcessor extends AbstractProcessor implements Sear
 
     static final PropertyDescriptor RECORD_WRITER = new PropertyDescriptor.Builder()
             .name("Record Writer")
-            .displayName("Record Writer")
             .description("The Record Writer to use for serializing Records after they have been transformed")
             .required(true)
             .identifiesControllerService(RecordSetWriterFactory.class)
             .build();
 
     static final PropertyDescriptor LANGUAGE = new PropertyDescriptor.Builder()
-            .name("Script Engine")
-            .displayName("Script Language")
+            .name(ScriptingComponentHelper.SCRIPT_ENGINE_PROPERTY)
             .description("The Language to use for the script")
             .allowableValues(SCRIPT_OPTIONS)
             .defaultValue("Groovy")
@@ -139,6 +137,11 @@ abstract class ScriptedRecordProcessor extends AbstractProcessor implements Sear
     @Override
     public Collection<SearchResult> search(final SearchContext context) {
         return ScriptingComponentUtils.search(context, getLogger());
+    }
+
+    @Override
+    public void migrateProperties(PropertyConfiguration config) {
+        config.renameProperty("Script Engine", LANGUAGE.getName());
     }
 
     protected static Bindings setupBindings(final ScriptEngine scriptEngine) {

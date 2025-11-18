@@ -72,8 +72,7 @@ public class FileSystemFlowRegistryClient extends AbstractFlowRegistryClient {
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     {
-        objectMapper.setSerializationInclusion(JsonInclude.Include.NON_NULL);
-        objectMapper.setDefaultPropertyInclusion(JsonInclude.Value.construct(JsonInclude.Include.NON_NULL, JsonInclude.Include.NON_NULL));
+        objectMapper.setDefaultPropertyInclusion(JsonInclude.Include.NON_NULL);
         objectMapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
     }
 
@@ -237,6 +236,9 @@ public class FileSystemFlowRegistryClient extends AbstractFlowRegistryClient {
             final RegisteredFlowSnapshot snapshot = parser.readValueAs(RegisteredFlowSnapshot.class);
             populateBucket(snapshot, bucketId);
             populateFlow(snapshot, bucketId, flowId, versionFiles == null ? 0 : versionFiles.length);
+
+            final String latestVersion = getLatestVersion(context, flowVersionLocation).orElse(null);
+            snapshot.setLatest(version.equals(latestVersion));
 
             return snapshot;
         }

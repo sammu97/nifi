@@ -279,6 +279,117 @@ public class ParameterContextIT extends NiFiSystemIT {
     }
 
     @Test
+    public void testParameterProviderUpdateMultipleGroups() throws NiFiClientException, IOException, InterruptedException {
+        ParameterProviderEntity parameterProvider = createParameterProvider("PropertiesParameterProvider");
+
+        final Map<String, String> initialProperties = new HashMap<>();
+        initialProperties.put("group1", "A1=1\nA2=1");
+        initialProperties.put("group2", "B1=2\nB2=2");
+        parameterProvider = updateParameterProviderProperties(parameterProvider, initialProperties);
+
+        final String parameterGroupName1 = "group1";
+        final String parameterContextName1 = "PC-group-1";
+        final ParameterContextEntity contextEntity1 = createParameterContextEntity(parameterContextName1, null, Collections.emptySet(),
+                Collections.emptyList(), parameterProvider, parameterGroupName1);
+        final ParameterContextEntity createdContextEntity1 = getNifiClient().getParamContextClient().createParamContext(contextEntity1);
+
+        final String parameterGroupName2 = "group2";
+        final String parameterContextName2 = "PC-group-2";
+        final ParameterContextEntity contextEntity2 = createParameterContextEntity(parameterContextName2, null, Collections.emptySet(),
+                Collections.emptyList(), parameterProvider, parameterGroupName2);
+        final ParameterContextEntity createdContextEntity2 = getNifiClient().getParamContextClient().createParamContext(contextEntity2);
+
+        final Map<String, ParameterSensitivity> sensitivities = new HashMap<>();
+        sensitivities.put("A1", ParameterSensitivity.NON_SENSITIVE);
+        sensitivities.put("A2", ParameterSensitivity.NON_SENSITIVE);
+        sensitivities.put("B1", ParameterSensitivity.NON_SENSITIVE);
+        sensitivities.put("B2", ParameterSensitivity.NON_SENSITIVE);
+        sensitivities.put("C", ParameterSensitivity.NON_SENSITIVE);
+        sensitivities.put("D", ParameterSensitivity.NON_SENSITIVE);
+
+        final ParameterGroupConfigurationEntity config1 = new ParameterGroupConfigurationEntity();
+        config1.setSynchronized(true);
+        config1.setGroupName("group1");
+        config1.setParameterContextName(parameterContextName1);
+        config1.setParameterSensitivities(sensitivities);
+
+        final ParameterGroupConfigurationEntity config2 = new ParameterGroupConfigurationEntity();
+        config2.setSynchronized(true);
+        config2.setGroupName("group2");
+        config2.setParameterContextName(parameterContextName2);
+        config2.setParameterSensitivities(sensitivities);
+
+        fetchAndWaitForAppliedParameters(parameterProvider, Arrays.asList(config1, config2));
+
+        ParameterContextEntity fetchedContext1 = getNifiClient().getParamContextClient().getParamContext(createdContextEntity1.getId(), false);
+        ParameterContextEntity fetchedContext2 = getNifiClient().getParamContextClient().getParamContext(createdContextEntity2.getId(), false);
+
+        assertEquals(Set.of("A1", "A2"), getParameterNames(fetchedContext1));
+        assertEquals(Set.of("B1", "B2"), getParameterNames(fetchedContext2));
+
+        final Map<String, String> updatedProperties = new HashMap<>();
+        updatedProperties.put("group1", "A2=1\nC=3");
+        updatedProperties.put("group2", "B1=2\nD=4");
+        parameterProvider = updateParameterProviderProperties(parameterProvider, updatedProperties);
+
+        fetchAndWaitForAppliedParameters(parameterProvider, Arrays.asList(config1, config2));
+
+        fetchedContext1 = getNifiClient().getParamContextClient().getParamContext(createdContextEntity1.getId(), false);
+        fetchedContext2 = getNifiClient().getParamContextClient().getParamContext(createdContextEntity2.getId(), false);
+
+        assertEquals(Set.of("A2", "C"), getParameterNames(fetchedContext1));
+        assertEquals(Set.of("B1", "D"), getParameterNames(fetchedContext2));
+    }
+
+    @Test
+    public void testParameterRemovalThroughProvider() throws NiFiClientException, IOException, InterruptedException {
+        final ParameterProviderEntity parameterProvider = createParameterProvider("PropertiesParameterProvider");
+
+        final Map<String, String> initialProperties = new HashMap<>();
+        initialProperties.put("parameters", "a=1\nb=2");
+        final ParameterProviderEntity updatedProvider = updateParameterProviderProperties(parameterProvider, initialProperties);
+
+        final String parameterGroupName = "Parameters";
+        final String parameterContextName = getTestName();
+        final ParameterContextEntity contextEntity = createParameterContextEntity(parameterContextName, null, Collections.emptySet(),
+                Collections.emptyList(), updatedProvider, parameterGroupName);
+        final ParameterContextEntity createdContextEntity = getNifiClient().getParamContextClient().createParamContext(contextEntity);
+
+        setParameterContext("root", createdContextEntity);
+
+        final ParameterGroupConfigurationEntity groupConfiguration = new ParameterGroupConfigurationEntity();
+        groupConfiguration.setSynchronized(true);
+        groupConfiguration.setGroupName(parameterGroupName);
+        groupConfiguration.setParameterContextName(parameterContextName);
+        final Map<String, ParameterSensitivity> sensitivities = new HashMap<>();
+        sensitivities.put("a", ParameterSensitivity.NON_SENSITIVE);
+        sensitivities.put("b", ParameterSensitivity.NON_SENSITIVE);
+        groupConfiguration.setParameterSensitivities(sensitivities);
+
+        fetchAndWaitForAppliedParameters(updatedProvider, Collections.singletonList(groupConfiguration));
+
+        ParameterContextEntity fetchedContext = getNifiClient().getParamContextClient().getParamContext(createdContextEntity.getId(), false);
+        assertEquals(Set.of("a", "b"), getParameterNames(fetchedContext));
+
+        final Map<String, String> removedProperties = new HashMap<>();
+        removedProperties.put("parameters", "a=1");
+        final ParameterProviderEntity removedProvider = updateParameterProviderProperties(updatedProvider, removedProperties);
+
+        fetchAndWaitForAppliedParameters(removedProvider, Collections.singletonList(groupConfiguration));
+
+        final ParameterContextEntity contextAfterFailure = getNifiClient().getParamContextClient().getParamContext(createdContextEntity.getId(), false);
+        assertEquals(Set.of("a"), getParameterNames(contextAfterFailure));
+    }
+
+    private Set<String> getParameterNames(final ParameterContextEntity context) {
+        return context.getComponent()
+                .getParameters()
+                .stream()
+                .map(entity -> entity.getParameter().getName())
+                .collect(Collectors.toSet());
+    }
+
+    @Test
     public void testParametersReferencingEL() throws NiFiClientException, IOException, InterruptedException {
         final ProcessorEntity generate = getClientUtil().createProcessor("GenerateFlowFile");
         getClientUtil().updateProcessorProperties(generate, Collections.singletonMap("a", "1"));

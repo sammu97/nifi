@@ -21,12 +21,10 @@ import com.fasterxml.jackson.core.JsonParseException;
 import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.core.JsonParser.Feature;
 import com.fasterxml.jackson.core.JsonToken;
-import com.fasterxml.jackson.core.StreamReadConstraints;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import org.apache.nifi.components.PropertyDescriptor;
 import org.apache.nifi.logging.ComponentLog;
-import org.apache.nifi.processor.DataUnit;
 import org.apache.nifi.processor.util.StandardValidators;
 import org.apache.nifi.serialization.MalformedRecordException;
 import org.apache.nifi.serialization.RecordReader;
@@ -58,7 +56,6 @@ public abstract class AbstractJsonRowRecordReader implements RecordReader {
 
     public static final PropertyDescriptor MAX_STRING_LENGTH = new PropertyDescriptor.Builder()
             .name("Max String Length")
-            .displayName("Max String Length")
             .description("The maximum allowed length of a string value when parsing the JSON document")
             .required(true)
             .defaultValue(DEFAULT_MAX_STRING_LENGTH)
@@ -67,16 +64,11 @@ public abstract class AbstractJsonRowRecordReader implements RecordReader {
 
     public static final PropertyDescriptor ALLOW_COMMENTS = new PropertyDescriptor.Builder()
             .name("Allow Comments")
-            .displayName("Allow Comments")
             .description("Whether to allow comments when parsing the JSON document")
             .required(true)
             .allowableValues("true", "false")
             .defaultValue("false")
             .addValidator(StandardValidators.BOOLEAN_VALIDATOR)
-            .build();
-
-    static final StreamReadConstraints DEFAULT_STREAM_READ_CONSTRAINTS = StreamReadConstraints.builder()
-            .maxStringLength(DataUnit.parseDataSize(DEFAULT_MAX_STRING_LENGTH, DataUnit.B).intValue())
             .build();
 
     private final ComponentLog logger;
@@ -303,9 +295,7 @@ public abstract class AbstractJsonRowRecordReader implements RecordReader {
 
         final Map<String, Object> mapValue = new LinkedHashMap<>();
 
-        final Iterator<Map.Entry<String, JsonNode>> fieldItr = fieldNode.fields();
-        while (fieldItr.hasNext()) {
-            final Map.Entry<String, JsonNode> entry = fieldItr.next();
+        for (Map.Entry<String, JsonNode> entry : fieldNode.properties()) {
             final String elementName = entry.getKey();
             final JsonNode elementNode = entry.getValue();
 

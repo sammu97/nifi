@@ -16,6 +16,7 @@
  */
 package org.apache.nifi.web.api.dto;
 
+import jakarta.ws.rs.WebApplicationException;
 import org.apache.commons.codec.digest.DigestUtils;
 import org.apache.commons.lang3.ClassUtils;
 import org.apache.commons.lang3.StringUtils;
@@ -119,9 +120,9 @@ import org.apache.nifi.diagnostics.DiagnosticLevel;
 import org.apache.nifi.diagnostics.GarbageCollection;
 import org.apache.nifi.diagnostics.StorageUsage;
 import org.apache.nifi.diagnostics.SystemDiagnostics;
-import org.apache.nifi.flowanalysis.FlowAnalysisRule;
 import org.apache.nifi.flow.VersionedComponent;
 import org.apache.nifi.flow.VersionedProcessGroup;
+import org.apache.nifi.flowanalysis.FlowAnalysisRule;
 import org.apache.nifi.flowfile.FlowFilePrioritizer;
 import org.apache.nifi.flowfile.attributes.CoreAttributes;
 import org.apache.nifi.groups.ProcessGroup;
@@ -255,8 +256,6 @@ import org.apache.nifi.web.api.entity.RemoteProcessGroupStatusSnapshotEntity;
 import org.apache.nifi.web.api.entity.TenantEntity;
 import org.apache.nifi.web.controller.ControllerFacade;
 import org.apache.nifi.web.revision.RevisionManager;
-
-import jakarta.ws.rs.WebApplicationException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -439,6 +438,7 @@ public final class DtoFactory {
        final ComponentStateDTO dto = new ComponentStateDTO();
        dto.setComponentId(componentId);
        dto.setStateDescription(getStateDescription(componentClass));
+       dto.setDropStateKeySupported(getDropStateKeySupported(componentClass));
        dto.setLocalState(createStateMapDTO(Scope.LOCAL, localState));
        dto.setClusterState(createStateMapDTO(Scope.CLUSTER, clusterState));
        return dto;
@@ -460,6 +460,22 @@ public final class DtoFactory {
    }
 
    /**
+    * Gets whether dropping state by key is supported for the component.
+    * Defaults to false when annotation not present or field not specified.
+    *
+    * @param componentClass the component class
+    * @return true if dropping state by key is supported; false otherwise
+    */
+   private boolean getDropStateKeySupported(final Class<?> componentClass) {
+       final Stateful statefulAnnotation = componentClass.getAnnotation(Stateful.class);
+       boolean result = false;
+       if (statefulAnnotation != null) {
+           result = statefulAnnotation.dropStateKeySupported();
+       }
+       return result;
+   }
+
+   /**
     * Creates a StateMapDTO for the given scope and state map.
     *
     * @param scope the scope
@@ -474,7 +490,7 @@ public final class DtoFactory {
        final StateMapDTO dto = new StateMapDTO();
        dto.setScope(scope.toString());
 
-       final TreeMap<String, String> sortedState = new TreeMap<>(SortedStateUtils.getKeyComparator());
+       final Map<String, String> sortedState = new TreeMap<>(SortedStateUtils.getKeyComparator());
        final Map<String, String> state = stateMap.toMap();
        sortedState.putAll(state);
 
@@ -735,6 +751,14 @@ public final class DtoFactory {
                }
 
                dto.getSelectedRelationships().add(selectedRelationship.getName());
+
+               // Check if this selected relationship is configured to be retried from the source
+               if (connection.getSource().isRelationshipRetried(selectedRelationship)) {
+                   if (dto.getRetriedRelationships() == null) {
+                       dto.setRetriedRelationships(new TreeSet<>(Collator.getInstance(Locale.US)));
+                   }
+                   dto.getRetriedRelationships().add(selectedRelationship.getName());
+               }
            }
        }
 
@@ -1182,6 +1206,8 @@ public final class DtoFactory {
        snapshot.setFlowFilesOut(connectionStatus.getOutputCount());
        snapshot.setBytesOut(connectionStatus.getOutputBytes());
 
+       snapshot.setLoadBalanceStatus(connectionStatus.getLoadBalanceStatus());
+
        ConnectionStatusPredictions predictions = connectionStatus.getPredictions();
        ConnectionStatusPredictionsSnapshotDTO predictionsDTO = null;
        if (predictions != null) {
@@ -1605,7 +1631,8 @@ public final class DtoFactory {
        dto.setRestricted(reportingTaskNode.isRestricted());
        dto.setDeprecated(reportingTaskNode.isDeprecated());
        dto.setExtensionMissing(reportingTaskNode.isExtensionMissing());
-       dto.setMultipleVersionsAvailable(compatibleBundles.size() > 1);
+       // Enable changing version on ghost reporting tasks when at least one compatible bundle exists
+       dto.setMultipleVersionsAvailable(reportingTaskNode.isExtensionMissing() ? !compatibleBundles.isEmpty() : compatibleBundles.size() > 1);
 
        final Map<String, String> defaultSchedulingPeriod = new HashMap<>();
        defaultSchedulingPeriod.put(SchedulingStrategy.TIMER_DRIVEN.name(), SchedulingStrategy.TIMER_DRIVEN.getDefaultSchedulingPeriod());
@@ -1693,7 +1720,8 @@ public final class DtoFactory {
        dto.setRestricted(parameterProviderNode.isRestricted());
        dto.setDeprecated(parameterProviderNode.isDeprecated());
        dto.setExtensionMissing(parameterProviderNode.isExtensionMissing());
-       dto.setMultipleVersionsAvailable(compatibleBundles.size() > 1);
+       // Enable changing version on ghost parameter providers when at least one compatible bundle exists
+       dto.setMultipleVersionsAvailable(parameterProviderNode.isExtensionMissing() ? !compatibleBundles.isEmpty() : compatibleBundles.size() > 1);
 
        // sort a copy of the properties
        final Map<PropertyDescriptor, String> sortedProperties = new TreeMap<>((o1, o2) -> Collator.getInstance(Locale.US).compare(o1.getName(), o2.getName()));
@@ -1805,7 +1833,8 @@ public final class DtoFactory {
        dto.setRestricted(controllerServiceNode.isRestricted());
        dto.setDeprecated(controllerServiceNode.isDeprecated());
        dto.setExtensionMissing(controllerServiceNode.isExtensionMissing());
-       dto.setMultipleVersionsAvailable(compatibleBundles.size() > 1);
+       // Enable changing version on ghost controller services when at least one compatible bundle exists
+       dto.setMultipleVersionsAvailable(controllerServiceNode.isExtensionMissing() ? !compatibleBundles.isEmpty() : compatibleBundles.size() > 1);
        dto.setVersionedComponentId(controllerServiceNode.getVersionedComponentId().orElse(null));
 
        // sort a copy of the properties
@@ -2770,12 +2799,24 @@ public final class DtoFactory {
 
    public Set<ComponentDifferenceDTO> createComponentDifferenceDtosForLocalModifications(final FlowComparison comparison, final VersionedProcessGroup localGroup, final FlowManager flowManager) {
        final Map<ComponentDifferenceDTO, List<DifferenceDTO>> differencesByComponent = new HashMap<>();
+       final Map<ComponentDifferenceDTO, Set<DifferenceDTO>> bundleDifferencesByComponent = new HashMap<>();
 
        final Map<String, VersionedProcessGroup> versionedGroups = flattenProcessGroups(comparison.getFlowA().getContents());
 
-       for (final FlowDifference difference : comparison.getDifferences()) {
+       final Collection<FlowDifference> comparisonDifferences = comparison.getDifferences();
+       final FlowDifferenceFilters.EnvironmentalChangeContext environmentalContext =
+               FlowDifferenceFilters.buildEnvironmentalChangeContext(comparisonDifferences, flowManager);
+
+       for (final FlowDifference difference : comparisonDifferences) {
+           // capture bundle differences and dedupe those differences
+           if (FlowDifferenceFilters.isBundleChange(difference)) {
+               final ComponentDifferenceDTO componentDiff = createBundleDifference(difference);
+               final Set<DifferenceDTO> differences = bundleDifferencesByComponent.computeIfAbsent(componentDiff, key -> new HashSet<>());
+               differences.add(createDifferenceDto(difference));
+           }
+
            // Ignore any environment-specific change
-           if (FlowDifferenceFilters.isEnvironmentalChange(difference, localGroup, flowManager)) {
+           if (FlowDifferenceFilters.isEnvironmentalChange(difference, localGroup, flowManager, environmentalContext)) {
                continue;
            }
 
@@ -2787,12 +2828,19 @@ public final class DtoFactory {
 
            final ComponentDifferenceDTO componentDiff = createComponentDifference(difference);
            final List<DifferenceDTO> differences = differencesByComponent.computeIfAbsent(componentDiff, key -> new ArrayList<>());
+           differences.add(createDifferenceDto(difference));
+       }
 
-           final DifferenceDTO dto = new DifferenceDTO();
-           dto.setDifferenceType(difference.getDifferenceType().getDescription());
-           dto.setDifference(difference.getDescription());
-
-           differences.add(dto);
+       if (!differencesByComponent.isEmpty()) {
+           // differences were found, so now let's add back in any BUNDLE_CHANGED differences
+           // since they were initially filtered out as an environment-specific change
+           bundleDifferencesByComponent.forEach((key, value) -> {
+               List<DifferenceDTO> values = value.stream().toList();
+               differencesByComponent.merge(key, values, (v1, v2) -> {
+                   v1.addAll(v2);
+                   return v1;
+               });
+           });
        }
 
        for (final Map.Entry<ComponentDifferenceDTO, List<DifferenceDTO>> entry : differencesByComponent.entrySet()) {
@@ -2800,6 +2848,16 @@ public final class DtoFactory {
        }
 
        return differencesByComponent.keySet();
+   }
+
+   /*
+    * Create a custom difference with a simpler difference description, only for matching descriptions.
+    */
+   DifferenceDTO createDifferenceDto(final FlowDifference difference) {
+       final DifferenceDTO dto = new DifferenceDTO();
+       dto.setDifferenceType(difference.getDifferenceType().getDescription());
+       dto.setDifference(difference.getDescription());
+       return dto;
    }
 
    private Map<String, VersionedProcessGroup> flattenProcessGroups(final VersionedProcessGroup group) {
@@ -2814,6 +2872,18 @@ public final class DtoFactory {
        for (final VersionedProcessGroup child : group.getProcessGroups()) {
            flattenProcessGroups(child, flattened);
        }
+   }
+
+   private ComponentDifferenceDTO createBundleDifference(final FlowDifference difference) {
+       VersionedComponent component = difference.getComponentB();
+
+       final ComponentDifferenceDTO dto = new ComponentDifferenceDTO();
+       dto.setComponentType(component.getComponentType().toString());
+       // bundle difference could apply to many components, but use the Process Group identifier as
+       // the Component Identifier here so that many similar component differences can be easily deduped
+       dto.setComponentId(component.getGroupIdentifier());
+
+       return dto;
    }
 
    private ComponentDifferenceDTO createComponentDifference(final FlowDifference difference) {
@@ -2927,7 +2997,6 @@ public final class DtoFactory {
 
        return mapping;
    }
-
 
    /**
     * Creates a ProcessGroupContentDTO from the specified ProcessGroup.
@@ -3338,13 +3407,15 @@ public final class DtoFactory {
        dto.setDeprecated(node.isDeprecated());
        dto.setExecutionNodeRestricted(node.isExecutionNodeRestricted());
        dto.setExtensionMissing(node.isExtensionMissing());
-       dto.setMultipleVersionsAvailable(compatibleBundleCount > 1);
+       // Enable changing version on ghost processors when at least one compatible bundle exists
+       dto.setMultipleVersionsAvailable(node.isExtensionMissing() ? compatibleBundleCount > 0 : compatibleBundleCount > 1);
        dto.setVersionedComponentId(node.getVersionedComponentId().orElse(null));
 
        dto.setType(node.getCanonicalClassName());
        dto.setBundle(createBundleDto(bundleCoordinate));
        dto.setName(node.getName());
        dto.setState(node.getScheduledState().toString());
+       dto.setPhysicalState(node.getPhysicalScheduledState().toString());
 
        // build the relationship dtos
        final List<RelationshipDTO> relationships = new ArrayList<>();
@@ -3431,22 +3502,24 @@ public final class DtoFactory {
    public List<BulletinDTO> createBulletinDtos(final List<Bulletin> bulletins) {
        final List<BulletinDTO> bulletinDtos = new ArrayList<>(bulletins.size());
        for (final Bulletin bulletin : bulletins) {
-           bulletinDtos.add(createBulletinDto(bulletin));
+           bulletinDtos.add(createBulletinDto(bulletin, false));
        }
        return bulletinDtos;
    }
 
    /**
-    * Creates a BulletinDTO for the specified Bulletin.
+    * Creates a BulletinDTO for the specified Bulletin with optional stack trace inclusion.
     *
     * @param bulletin bulletin
+    * @param includeStackTrace whether to include stack trace
     * @return dto
     */
-   public BulletinDTO createBulletinDto(final Bulletin bulletin) {
+   public BulletinDTO createBulletinDto(final Bulletin bulletin, final boolean includeStackTrace) {
        final BulletinDTO dto = new BulletinDTO();
        dto.setId(bulletin.getId());
        dto.setNodeAddress(bulletin.getNodeAddress());
        dto.setTimestamp(bulletin.getTimestamp());
+       dto.setTimestampIso(bulletin.getTimestamp() != null ? bulletin.getTimestamp().toInstant() : null);
        dto.setGroupId(bulletin.getGroupId());
        dto.setSourceId(bulletin.getSourceId());
        dto.setSourceName(bulletin.getSourceName());
@@ -3454,6 +3527,7 @@ public final class DtoFactory {
        dto.setLevel(bulletin.getLevel());
        dto.setMessage(bulletin.getMessage());
        dto.setSourceType(bulletin.getSourceType().name());
+       dto.setStackTrace(includeStackTrace ? bulletin.getStackTrace() : null);
        return dto;
    }
 
@@ -4480,6 +4554,7 @@ public final class DtoFactory {
        copy.setName(original.getName());
        copy.setParentGroupId(original.getParentGroupId());
        copy.setSelectedRelationships(copy(original.getSelectedRelationships()));
+       copy.setRetriedRelationships(copy(original.getRetriedRelationships()));
        copy.setFlowFileExpiration(original.getFlowFileExpiration());
        copy.setBackPressureObjectThreshold(original.getBackPressureObjectThreshold());
        copy.setBackPressureDataSizeThreshold(original.getBackPressureDataSizeThreshold());
@@ -4928,7 +5003,8 @@ public final class DtoFactory {
        dto.setRestricted(flowRegistryClientNode.isRestricted());
        dto.setDeprecated(flowRegistryClientNode.isDeprecated());
        dto.setExtensionMissing(flowRegistryClientNode.isExtensionMissing());
-       dto.setMultipleVersionsAvailable(compatibleBundles.size() > 1);
+       // Enable changing version on ghost flow registry clients when at least one compatible bundle exists
+       dto.setMultipleVersionsAvailable(flowRegistryClientNode.isExtensionMissing() ? !compatibleBundles.isEmpty() : compatibleBundles.size() > 1);
 
        // sort a copy of the properties
        final Map<PropertyDescriptor, String> sortedProperties = new TreeMap<>((o1, o2) -> Collator.getInstance(Locale.US).compare(o1.getName(), o2.getName()));
@@ -5004,7 +5080,8 @@ public final class DtoFactory {
        dto.setRestricted(flowAnalysisRuleNode.isRestricted());
        dto.setDeprecated(flowAnalysisRuleNode.isDeprecated());
        dto.setExtensionMissing(flowAnalysisRuleNode.isExtensionMissing());
-       dto.setMultipleVersionsAvailable(compatibleBundles.size() > 1);
+       // Enable changing version on ghost flow analysis rules when at least one compatible bundle exists
+       dto.setMultipleVersionsAvailable(flowAnalysisRuleNode.isExtensionMissing() ? !compatibleBundles.isEmpty() : compatibleBundles.size() > 1);
 
        // sort a copy of the properties
        final Map<PropertyDescriptor, String> sortedProperties = new TreeMap<>(

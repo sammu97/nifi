@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-import { Component, DestroyRef, EventEmitter, inject, Inject, Input, Output } from '@angular/core';
+import { Component, DestroyRef, EventEmitter, inject, Input, Output } from '@angular/core';
 import { MAT_DIALOG_DATA, MatDialogModule } from '@angular/material/dialog';
 import { AccessPolicy } from '../../../state/shared';
 import { MatButtonModule } from '@angular/material/button';
@@ -52,13 +52,20 @@ import { CloseOnEscapeDialog } from '@nifi/shared';
     styleUrls: ['./add-tenant-to-policy-dialog.component.scss']
 })
 export class AddTenantToPolicyDialog extends CloseOnEscapeDialog {
+    private request = inject<AddTenantToPolicyDialogRequest>(MAT_DIALOG_DATA);
+    private formBuilder = inject(FormBuilder);
+
     @Input() set users$(users$: Observable<UserEntity[]>) {
         users$.pipe(takeUntilDestroyed(this.destroyRef)).subscribe((users: UserEntity[]) => {
             const policy: AccessPolicy = this.request.accessPolicy.component;
 
-            this.filteredUsers = users.filter((user: UserEntity) => {
-                return !policy.users.some((tenant: TenantEntity) => tenant.id === user.id);
-            });
+            this.filteredUsers = users
+                .filter((user: UserEntity) => {
+                    return !policy.users.some((tenant: TenantEntity) => tenant.id === user.id);
+                })
+                .sort((a, b) => {
+                    return a.component.identity.localeCompare(b.component.identity);
+                });
 
             this.userLookup.clear();
             this.filteredUsers.forEach((user: UserEntity) => {
@@ -71,9 +78,13 @@ export class AddTenantToPolicyDialog extends CloseOnEscapeDialog {
         userGroups$.pipe(takeUntilDestroyed(this.destroyRef)).subscribe((userGroups: UserGroupEntity[]) => {
             const policy: AccessPolicy = this.request.accessPolicy.component;
 
-            this.filteredUserGroups = userGroups.filter((userGroup: UserGroupEntity) => {
-                return !policy.userGroups.some((tenant: TenantEntity) => tenant.id === userGroup.id);
-            });
+            this.filteredUserGroups = userGroups
+                .filter((userGroup: UserGroupEntity) => {
+                    return !policy.userGroups.some((tenant: TenantEntity) => tenant.id === userGroup.id);
+                })
+                .sort((a, b) => {
+                    return a.component.identity.localeCompare(b.component.identity);
+                });
 
             this.userGroupLookup.clear();
             this.filteredUserGroups.forEach((user: UserGroupEntity) => {
@@ -95,10 +106,7 @@ export class AddTenantToPolicyDialog extends CloseOnEscapeDialog {
     userLookup: Map<string, UserEntity> = new Map<string, UserEntity>();
     userGroupLookup: Map<string, UserGroupEntity> = new Map<string, UserGroupEntity>();
 
-    constructor(
-        @Inject(MAT_DIALOG_DATA) private request: AddTenantToPolicyDialogRequest,
-        private formBuilder: FormBuilder
-    ) {
+    constructor() {
         super();
         this.addTenantsForm = this.formBuilder.group({
             users: new FormControl([]),
